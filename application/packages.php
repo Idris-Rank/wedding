@@ -14,6 +14,7 @@ defined('DS') or exit('No direct access.');
 
 return [
     'docs' => ['handles' => 'docs'],
+    'admin' => ['handles' => 'admin'],
 
     // Add your own packages configuration here..
 
