@@ -1,0 +1,159 @@
+<?php
+
+namespace System;
+
+defined('DS') or exit('No direct access.');
+
+class Session
+{
+    /** @var string */
+    const TOKEN = 'csrf_token';
+
+    /**
+     * Contains the instance session (singleton).
+     *
+     * @var Session\Payload|null
+     */
+    public static $instance;
+
+    /**
+     * Contains the list of third-party session drivers.
+     *
+     * @var array
+     */
+    public static $registrar = [];
+
+    /**
+     * Create payload session and load session.
+     */
+    public static function load()
+    {
+        $config = Config::get('session');
+        $stateless = isset($config['stateless']) ? (array) $config['stateless'] : [];
+
+        if (! empty($stateless)) {
+            $path = trim(Request::foundation()->getPathInfo(), '/');
+
+            foreach ($stateless as $pattern) {
+                $pattern = trim((string) $pattern, '/');
+
+                if ($pattern === $path) {
+                    return;
+                }
+
+                if (strpos($pattern, '*') !== false) {
+                    $regex = '#^'.str_replace('\*', '.*', preg_quote($pattern, '#')).'\z#u';
+
+                    if (preg_match($regex, $path)) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        static::start($config['driver']);
+        static::$instance->load(Cookie::get($config['cookie']));
+    }
+
+    /**
+     * Create a new instance of the session payload.
+     *
+     * @param string $driver
+     */
+    public static function start($driver)
+    {
+        if (! is_string($driver) || empty($driver)) {
+            throw new \Exception('Session driver must be a non-empty string');
+        }
+
+        static::$instance = new Session\Payload(static::factory($driver));
+    }
+
+    /**
+     * Create a new instance of the session driver.
+     *
+     * @param string $driver
+     *
+     * @return Session\Drivers\Driver
+     */
+    public static function factory($driver)
+    {
+        if (! is_string($driver) || empty($driver)) {
+            throw new \Exception('Session driver must be a non-empty string');
+        }
+
+        if (isset(static::$registrar[$driver])) {
+            $resolver = static::$registrar[$driver];
+            return $resolver();
+        }
+
+        switch ($driver) {
+            case 'apc':       return new Session\Drivers\APC(Cache::driver('apc'));
+            case 'cookie':    return new Session\Drivers\Cookie();
+            case 'database':  return new Session\Drivers\Database(Database::connection());
+            case 'file':      return new Session\Drivers\File(path('storage').'sessions'.DS);
+            case 'memcached': return new Session\Drivers\Memcached(Cache::driver('memcached'));
+            case 'memory':    return new Session\Drivers\Memory();
+            case 'redis':     return new Session\Drivers\Redis(Cache::driver('redis'));
+            default:          throw new \Exception(sprintf('Unsupported session driver: %s', $driver));
+        }
+    }
+
+    /**
+     * Get the current session instance.
+     *
+     * @return Session\Payload
+     */
+    public static function instance()
+    {
+        if (static::started()) {
+            return static::$instance;
+        }
+
+        throw new \Exception('A driver must be set before using the session.');
+    }
+
+    /**
+     * Check if the session has started.
+     *
+     * @return bool
+     */
+    public static function started()
+    {
+        return ! is_null(static::$instance);
+    }
+
+    /**
+     * Finish the session work left for after the response: the expired-session sweep.
+     */
+    public static function terminate()
+    {
+        if (static::started()) {
+            static::$instance->sweep_expired();
+        }
+    }
+
+    /**
+     * Register a third-party session driver.
+     *
+     * @param string   $driver
+     * @param \Closure $resolver
+     */
+    public static function extend($driver, \Closure $resolver)
+    {
+        static::$registrar[$driver] = $resolver;
+    }
+
+    /**
+     * Magic method for calling methods on the current session instance statically.
+     *
+     * @param string $method
+     * @param array  $parameters
+     *
+     * @return mixed
+     */
+    public static function __callStatic($method, array $parameters)
+    {
+        return call_user_func_array([static::instance(), $method], $parameters);
+    }
+}

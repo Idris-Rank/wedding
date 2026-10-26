@@ -1,0 +1,142 @@
+<?php
+
+namespace System\Database\Facile\Relationships;
+
+defined('DS') or exit('No direct access.');
+
+use System\Database\Facile\Model;
+
+class BelongsTo extends Relationship
+{
+    /**
+     * Get the results of the relationship.
+     *
+     * @return \System\Database\Facile\Model
+     */
+    public function results()
+    {
+        return parent::first();
+    }
+
+    /**
+     * Update the parent model of the relationship.
+     *
+     * @param Model|array $attributes
+     *
+     * @return int
+     */
+    public function update($attributes)
+    {
+        $attributes = ($attributes instanceof Model) ? $attributes->get_dirty() : $attributes;
+        return $this->model->update($this->foreign_value(), $attributes);
+    }
+
+    /**
+     * Set the constraints for a relational query.
+     */
+    protected function constrain()
+    {
+        $this->table->where($this->model->key(), '=', $this->foreign_value());
+    }
+
+    /**
+     * Start the eager loading process for the relationship.
+     *
+     * @param array  $parents
+     * @param string $relationship
+     */
+    public function initialize(array &$parents, $relationship)
+    {
+        foreach ($parents as &$parent) {
+            $parent->relationships[$relationship] = null;
+        }
+    }
+
+    /**
+     * Set the constraints for an eager load of the relationship.
+     *
+     * @param array $results
+     */
+    public function eagerly_constrain(array $results)
+    {
+        $keys = [];
+
+        foreach ($results as $result) {
+            if (! is_null($key = $result->{$this->foreign_key()})) {
+                $keys[] = $key;
+            }
+        }
+
+        if (0 === count($keys)) {
+            $keys = [0];
+        }
+
+        static::constrain_keys($this->table, $this->model->key(), array_unique($keys));
+    }
+
+    /**
+     * Match the eagerly loaded results to their parents.
+     *
+     * @param string $relationship
+     * @param array  $children
+     * @param array  $parents
+     */
+    public function match($relationship, &$children, array $parents)
+    {
+        $foreign = $this->foreign_key();
+        $dictionary = [];
+
+        foreach ($parents as $parent) {
+            $dictionary[$parent->get_key()] = $parent;
+        }
+
+        foreach ($children as $child) {
+            if (array_key_exists($child->{$foreign}, $dictionary)) {
+                $child->relationships[$relationship] = $dictionary[$child->{$foreign}];
+            }
+        }
+    }
+
+    /**
+     * Get the value of the foreign key.
+     *
+     * @return mixed
+     */
+    public function foreign_value()
+    {
+        return $this->base->get_attribute($this->foreign);
+    }
+
+    /**
+     * Bind object to the parent by updating the foreign key.
+     *
+     * @param mixed $id
+     *
+     * @return \System\Database\Facile\Model
+     */
+    public function bind($id)
+    {
+        $this->base->{$this->foreign} = $id;
+        $this->base->save();
+        return $this->base;
+    }
+
+    /**
+     * Correlate the relational query with the parent table.
+     *
+     * @param string $parent_table
+     *
+     * @return \System\Database\Facile\Query
+     */
+    public function correlate($parent_table)
+    {
+        $this->reset_constraints();
+        $this->table->where_column(
+            $this->model->table() . '.' . $this->model->key(),
+            '=',
+            $parent_table . '.' . $this->foreign
+        );
+
+        return $this->table;
+    }
+}

@@ -1,0 +1,439 @@
+<?php
+
+namespace System;
+
+defined('DS') or exit('No direct access.');
+
+class JWT
+{
+    /**
+     * List of supported algorithms.
+     *
+     * @var array
+     */
+    protected static $algorithms = [
+        'HS256' => ['hash' => 'SHA256', 'type' => 'symmetric'],
+        'HS384' => ['hash' => 'SHA384', 'type' => 'symmetric'],
+        'HS512' => ['hash' => 'SHA512', 'type' => 'symmetric'],
+        'RS256' => ['hash' => 'SHA256', 'type' => 'asymmetric'],
+        'RS384' => ['hash' => 'SHA384', 'type' => 'asymmetric'],
+        'RS512' => ['hash' => 'SHA512', 'type' => 'asymmetric'],
+    ];
+
+    /**
+     * Leeway in seconds for token expiration.
+     *
+     * @var int
+     */
+    public static $leeway = 0;
+
+    /**
+     * Timestamp for token creation.
+     *
+     * @var int
+     */
+    public static $timestamp;
+
+    /**
+     * Encode payload.
+     *
+     * @param array  $payloads
+     * @param string $key
+     * @param array  $headers
+     * @param string $algorithm
+     *
+     * @return string
+     */
+    public static function encode(array $payloads, $key, array $headers = [], $algorithm = 'HS256')
+    {
+        if (! is_string($key) || strlen($key) < 1) {
+            throw new \Exception('Key cannot be empty or non-string value');
+        }
+
+        if (! is_string($algorithm) || strlen($algorithm) < 1) {
+            throw new \Exception('Empty or non-string algorithm');
+        }
+
+        $algorithm = strtoupper($algorithm);
+
+        if (! isset(static::$algorithms[$algorithm])) {
+            throw new \Exception(sprintf(
+                "Only these algorithms are supported: %s. Got '%s' (%s)",
+                implode(', ', array_keys(static::$algorithms)),
+                $algorithm,
+                gettype($algorithm)
+            ));
+        }
+
+        $headers = array_merge($headers, ['typ' => 'JWT', 'alg' => $algorithm]);
+        $headers = static::encode_url(static::encode_json($headers));
+        $payloads = static::encode_url(static::encode_json($payloads));
+        $signature = static::encode_url(static::signature($headers.'.'.$payloads, $key, $algorithm));
+        return $headers.'.'.$payloads.'.'.$signature;
+    }
+
+    /**
+     * Decode payload.
+     *
+     * Supported options:
+     *
+     *   - 'algorithm': algorithm (or list) the token may be signed with. Left out,
+     *                  a PEM key accepts RS* only and any other key HS* only.
+     *   - 'aud':       expected audience, the token must carry a matching claim.
+     *   - 'iss':       expected issuer, the token must carry a matching claim.
+     *   - 'validator': callable receiving ($payloads, $headers) for extra checks.
+     *
+     * @param string $token
+     * @param string $key
+     * @param array  $options
+     *
+     * @return \stdClass
+     */
+    public static function decode($token, $key, array $options = [])
+    {
+        if (! is_string($key) || strlen($key) < 1) {
+            throw new \Exception('Key cannot be empty or non-string value');
+        }
+
+        $jwt = explode('.', $token);
+        $timestamp = static::$timestamp ?: time();
+
+        if (! is_array($jwt) || count($jwt) !== 3) {
+            throw new \Exception('Wrong number of segments');
+        }
+
+        list($headers64, $payloads64, $signature64) = $jwt;
+        $headers = static::decode_json(static::decode_url($headers64));
+
+        if (null === $headers) {
+            throw new \Exception('Invalid header encoding');
+        }
+
+        $payloads = static::decode_json(static::decode_url($payloads64));
+
+        if (null === $payloads) {
+            throw new \Exception('Invalid claims encoding');
+        }
+
+        if (is_array($payloads) && count($payloads) < 1) {
+            $payloads = new \stdClass();
+        }
+
+        $signature = static::decode_url($signature64);
+
+        if (false === $signature) {
+            throw new \Exception('Invalid signature encoding');
+        }
+
+        if (! isset($headers->alg) || ! is_string($headers->alg) || strlen($headers->alg) < 1) {
+            throw new \Exception('Empty or non-string algorithm');
+        }
+
+        if (! isset(static::$algorithms[$headers->alg])) {
+            throw new \Exception(sprintf(
+                "Only these algorithms are supported: %s. Got '%s' (%s)",
+                implode(', ', array_keys(static::$algorithms)),
+                $headers->alg,
+                gettype($headers->alg)
+            ));
+        }
+
+        $allowed = isset($options['algorithm'])
+            ? array_map('strtoupper', array_map('strval', (array) $options['algorithm']))
+            : static::suitable($key);
+
+        if (! in_array(strtoupper($headers->alg), $allowed, true)) {
+            throw new \Exception(sprintf(
+                "Algorithm not allowed: '%s' (allowed: %s)",
+                $headers->alg,
+                implode(', ', $allowed)
+            ));
+        }
+
+        if (isset($headers->typ) && (! is_string($headers->typ) || strtoupper($headers->typ) !== 'JWT')) {
+            throw new \Exception('Invalid token type');
+        }
+
+        if (! static::verify($headers64.'.'.$payloads64, $signature, $key, $headers->alg)) {
+            throw new \Exception('Signature verification failed');
+        }
+
+        if (isset($payloads->nbf) && $payloads->nbf > ($timestamp + static::$leeway)) {
+            throw new \Exception('Cannot handle token prior to ' . date(\DateTime::ATOM, (int) $payloads->nbf));
+        }
+
+        if (isset($payloads->iat) && $payloads->iat > ($timestamp + static::$leeway)) {
+            throw new \Exception('Cannot handle token prior to ' . date(\DateTime::ATOM, (int) $payloads->iat));
+        }
+
+        if (isset($payloads->exp) && ($timestamp - static::$leeway) >= $payloads->exp) {
+            throw new \Exception('Expired token');
+        }
+
+        if (isset($options['aud']) && (! isset($payloads->aud) || $payloads->aud !== $options['aud'])) {
+            throw new \Exception('Invalid audience');
+        }
+
+        if (isset($options['iss']) && (! isset($payloads->iss) || $payloads->iss !== $options['iss'])) {
+            throw new \Exception('Invalid issuer');
+        }
+
+        if (isset($options['validator']) && is_callable($options['validator'])) {
+            call_user_func($options['validator'], $payloads, $headers);
+        }
+
+        return $payloads;
+    }
+
+    /**
+     * Get the algorithms a key can legitimately verify.
+     *
+     * A public key is public: letting a token pick HS256 and verify against it as
+     * the HMAC secret would let anyone holding it sign tokens.
+     *
+     * @param string $key
+     *
+     * @return array
+     */
+    private static function suitable($key)
+    {
+        $asymmetric = function_exists('openssl_pkey_get_public')
+            && (false !== @openssl_pkey_get_public($key) || false !== @openssl_pkey_get_private($key));
+
+        $type = $asymmetric ? 'asymmetric' : 'symmetric';
+        $names = [];
+
+        foreach (static::$algorithms as $name => $info) {
+            if ($info['type'] === $type) {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Create a JWT signature.
+     *
+     * @param string $payload
+     * @param string $key
+     * @param string $algorithm
+     *
+     * @return string
+     */
+    private static function signature($payload, $key, $algorithm)
+    {
+        $algorithm = strtoupper((string) $algorithm);
+
+        if (! isset(static::$algorithms[$algorithm])) {
+            throw new \Exception(sprintf(
+                "Only these algorithms are supported: %s. Got '%s' (%s)",
+                implode(', ', array_keys(static::$algorithms)),
+                $algorithm,
+                gettype($algorithm)
+            ));
+        }
+
+        $info = static::$algorithms[$algorithm];
+
+        if ($info['type'] === 'symmetric') {
+            return hash_hmac($info['hash'], $payload, $key, true);
+        } elseif ($info['type'] === 'asymmetric') {
+            return static::rsa_sign($payload, $key, $algorithm);
+        }
+
+        throw new \Exception('Unsupported algorithm type');
+    }
+
+    /**
+     * Verify a JWT signature.
+     *
+     * @param string $payload
+     * @param string $signature
+     * @param string $key
+     * @param string $algorithm
+     *
+     * @return bool
+     */
+    private static function verify($payload, $signature, $key, $algorithm)
+    {
+        $algorithm = strtoupper((string) $algorithm);
+
+        if (! isset(static::$algorithms[$algorithm])) {
+            throw new \Exception(sprintf(
+                'Only these algorithms are supported: %s, got: %s (%s)',
+                implode(', ', array_keys(static::$algorithms)),
+                $algorithm,
+                gettype($algorithm)
+            ));
+        }
+
+        $info = static::$algorithms[$algorithm];
+
+        if ($info['type'] === 'symmetric') {
+            return Crypter::equals(hash_hmac($info['hash'], $payload, $key, true), $signature);
+        } elseif ($info['type'] === 'asymmetric') {
+            return static::rsa_verify($payload, $signature, $key, $algorithm);
+        }
+
+        throw new \Exception('Unsupported algorithm type');
+    }
+
+    /**
+     * Create an RSA signature.
+     *
+     * @param string $payload
+     * @param string $private_key
+     * @param string $algorithm
+     *
+     * @return string
+     */
+    private static function rsa_sign($payload, $private_key, $algorithm)
+    {
+        if (! function_exists('openssl_sign')) {
+            throw new \Exception('OpenSSL extension is not available');
+        }
+
+        if (! openssl_sign($payload, $signature, $private_key, static::$algorithms[$algorithm]['hash'])) {
+            throw new \Exception('OpenSSL unable to sign data');
+        }
+
+        return $signature;
+    }
+
+    /**
+     * Verify an RSA signature.
+     *
+     * @param string $payload
+     * @param string $signature
+     * @param string $public_key
+     * @param string $algorithm
+     *
+     * @return bool
+     */
+    private static function rsa_verify($payload, $signature, $public_key, $algorithm)
+    {
+        if (! function_exists('openssl_verify')) {
+            throw new \Exception('OpenSSL extension is not available');
+        }
+
+        $result = openssl_verify($payload, $signature, $public_key, static::$algorithms[$algorithm]['hash']);
+
+        if ($result === -1) {
+            throw new \Exception('OpenSSL error: '.openssl_error_string());
+        }
+
+        return $result === 1;
+    }
+
+    /**
+     * Encode string to Base64 URL.
+     *
+     * @param string $data
+     *
+     * @return string
+     */
+    private static function encode_url($data)
+    {
+        return str_replace('=', '', strtr(base64_encode($data), '+/', '-_'));
+    }
+
+    /**
+     * Decode string from Base64 URL.
+     *
+     * @param string $data
+     *
+     * @return string
+     */
+    private static function decode_url($data)
+    {
+        $remainder = strlen((string) $data) % 4;
+        $data .= $remainder ? str_repeat('=', 4 - $remainder) : '';
+        return base64_decode(strtr($data, '-_', '+/'));
+    }
+
+    /**
+     * Encode data to JSON.
+     *
+     * @param mixed $data
+     *
+     * @return string
+     */
+    private static function encode_json($data)
+    {
+        $json = json_encode($data);
+
+        if (JSON_ERROR_NONE !== json_last_error()) {
+            static::json_error(json_last_error());
+        } elseif ($json === 'null' && $data !== null) {
+            throw new \Exception('Null result with non-null input');
+        }
+
+        return $json;
+    }
+
+    /**
+     * Decode JSON to object.
+     *
+     * @param string $data
+     *
+     * @return \stdClass
+     */
+    private static function decode_json($data)
+    {
+        $object = json_decode($data, false);
+
+        if (JSON_ERROR_NONE !== json_last_error()) {
+            static::json_error(json_last_error());
+        } elseif ($object === null && $data !== 'null') {
+            throw new \Exception('Null result with non-null input');
+        }
+
+        return $object;
+    }
+
+    /**
+     * Handle JSON error.
+     *
+     * @param int $code
+     *
+     * @return void
+     */
+    private static function json_error($code)
+    {
+        $errors = [
+            JSON_ERROR_DEPTH => 'Maximum stack depth exceeded',
+            JSON_ERROR_STATE_MISMATCH => 'Invalid or malformed JSON',
+            JSON_ERROR_CTRL_CHAR => 'Unexpected control character found',
+            JSON_ERROR_SYNTAX => 'Syntax error, malformed JSON',
+            JSON_ERROR_UTF8 => 'Malformed UTF-8 characters',
+        ];
+
+        throw new \Exception(isset($errors[$code]) ? $errors[$code] : sprintf('Unknown JSON error: %s', $code));
+    }
+
+    /**
+     * Refresh token with new expiration.
+     *
+     * @param string $token
+     * @param string $key
+     * @param int    $new_exp
+     * @param array  $headers
+     * @param string $algorithm
+     * @param string $sign_key
+     *
+     * @return string
+     */
+    public static function refresh($token, $key, $new_exp, array $headers = [], $algorithm = null, $sign_key = null)
+    {
+        $payloads = static::decode($token, $key);
+        $payloads->exp = $new_exp;
+
+        if (is_null($algorithm)) {
+            $segments = explode('.', $token);
+            $algorithm = static::decode_json(static::decode_url($segments[0]))->alg;
+        }
+
+        return static::encode((array) $payloads, is_null($sign_key) ? $key : $sign_key, $headers, $algorithm);
+    }
+}

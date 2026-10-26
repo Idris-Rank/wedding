@@ -1,0 +1,11 @@
+*
+!.gitignore
+!index.html
+!cache/
+!console/
+!database/
+!debugbar/
+!jobs/
+!logs/
+!sessions/
+!views/

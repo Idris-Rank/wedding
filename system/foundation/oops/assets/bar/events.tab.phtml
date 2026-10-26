@@ -1,0 +1,18 @@
+<?php
+
+namespace System\Foundation\Oops;
+
+defined('DS') or exit('No direct access.');
+
+$events = isset($this->data['events']) ? $this->data['events'] : [];
+$count = count($events);
+?>
+<span title="Hooks">
+    <svg version="1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+        <g fill="#FF7043">
+            <path d="M24,4C12.9,4,4,12.9,4,24s8.9,20,20,20s20-8.9,20-20S35.1,4,24,4z M26,34h-4v-4h4V34z M26,26h-4V14h4V26z" />
+        </g>
+    </svg>
+    <span class="oops-label">Hooks</span>
+    <span class="oops-badge"><?php echo $count; ?></span>
+</span>

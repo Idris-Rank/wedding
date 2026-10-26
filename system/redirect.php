@@ -1,0 +1,275 @@
+<?php
+
+namespace System;
+
+defined('DS') or exit('No direct access.');
+
+class Redirect extends Response
+{
+    /**
+     * Key used to remember the url a guest was heading to.
+     *
+     * @var string
+     */
+    const INTENDED = 'rakit_intended_url';
+
+    /**
+     * Create a redirect response to the home page.
+     *
+     * @param int $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function home($status = 302)
+    {
+        return static::to(URL::home(), $status);
+    }
+
+    /**
+     * Create a redirect response to the previous page.
+     *
+     * @param int          $status
+     * @param string|false $fallback
+     *
+     * @return Redirect|mixed
+     */
+    public static function back($status = 302, $fallback = false)
+    {
+        $referrer = Request::referrer();
+
+        if (! static::local($referrer)) {
+            $referrer = $fallback ? $fallback : '/';
+        }
+
+        return static::to($referrer, $status);
+    }
+
+    /**
+     * Check whether a URL points back at this application. Another host never does.
+     *
+     * @param string $url
+     *
+     * @return bool
+     */
+    protected static function local($url)
+    {
+        if (! is_string($url) || '' === trim($url)) {
+            return false;
+        }
+
+        $host = parse_url(trim($url), PHP_URL_HOST);
+
+        return is_null($host) || $host === Request::foundation()->getHost();
+    }
+
+    /**
+     * Redirect to a local URL. Use away() for external ones.
+     *
+     * @param string $url
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function to($url, $status = 302)
+    {
+        if (is_string($url) && '' !== trim($url)) {
+            $trimmed = trim($url);
+
+            if (preg_match('#^(//|\\\\)#', $trimmed)) {
+                throw new \Exception('External URL not allowed for Redirect::to(), use Redirect::away() instead.');
+            }
+
+            if (filter_var($trimmed, FILTER_VALIDATE_URL)) {
+                if (!static::local($trimmed)) {
+                    throw new \Exception('External URL not allowed for Redirect::to(), use Redirect::away() instead.');
+                }
+            } else {
+                if (preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*:#', $trimmed)) {
+                    throw new \Exception('Invalid redirect URL.');
+                }
+            }
+
+            if (preg_match('/[\r\n]/', $trimmed)) {
+                throw new \Exception('Invalid redirect URL.');
+            }
+        }
+
+        return static::make('', $status)->header('Location', URL::to($url));
+    }
+
+    /**
+     * Create a redirect to a given controller action.
+     *
+     * @param string $action
+     * @param array  $parameters
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function to_action($action, array $parameters = [], $status = 302)
+    {
+        return static::to(URL::to_action($action, $parameters), $status);
+    }
+
+    /**
+     * Create a redirect to a named route.
+     *
+     * @param string $route
+     * @param array  $parameters
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function to_route($route, array $parameters = [], $status = 302)
+    {
+        return static::to(URL::to_route($route, $parameters), $status);
+    }
+
+    /**
+     * Create a redirect response to an external url, without passing it through URL::to().
+     *
+     * @param string $url
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function away($url, $status = 302)
+    {
+        if (is_string($url) && preg_match('/[\r\n]/', $url)) {
+            throw new \Exception('Invalid redirect URL.');
+        }
+        if (is_string($url) && preg_match('#^[a-zA-Z][a-zA-Z0-9+.-]*:#', trim($url))) {
+            $scheme = strtolower(parse_url(trim($url), PHP_URL_SCHEME));
+            if (!in_array($scheme, ['http', 'https'], true)) {
+                throw new \Exception('Invalid redirect URL scheme for away().');
+            }
+        }
+        return static::make('', $status)->header('Location', $url);
+    }
+
+    /**
+     * Create a redirect response to a https url.
+     *
+     * @param string $url
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function secure($url, $status = 302)
+    {
+        return static::away(Str::replace_first('http://', 'https://', URL::to($url)), $status);
+    }
+
+    /**
+     * Create a redirect response to the very same url.
+     *
+     * @param int $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function refresh($status = 302)
+    {
+        return static::to(URI::current(), $status);
+    }
+
+    /**
+     * Remember the current URL and redirect. Use intended() to come back.
+     *
+     * @param string $url
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function guest($url, $status = 302)
+    {
+        static::guard_session('guest');
+        Session::put(static::INTENDED, URL::current());
+
+        return static::to($url, $status);
+    }
+
+    /**
+     * Redirect to the url that was remembered by guest(), or to the default one.
+     *
+     * @param string $default
+     * @param int    $status
+     *
+     * @return Redirect|mixed
+     */
+    public static function intended($default = '/', $status = 302)
+    {
+        static::guard_session('intended');
+        $url = Session::get(static::INTENDED, $default);
+        Session::forget(static::INTENDED);
+
+        return static::to($url, $status);
+    }
+
+    /**
+     * Make sure a session driver is configured.
+     *
+     * @param string $method
+     */
+    protected static function guard_session($method)
+    {
+        if ('' === Config::get('session.driver', '')) {
+            throw new \Exception(sprintf('A session driver must be set before using Redirect::%s().', $method));
+        }
+    }
+
+    /**
+     * Flash an item to the session, available on the next request.
+     *
+     * @param string $key
+     * @param mixed  $value
+     *
+     * @return Redirect|mixed
+     */
+    public function with($key, $value)
+    {
+        if ('' === Config::get('session.driver', '')) {
+            throw new \Exception('A session driver must be set before setting flash data.');
+        }
+
+        Session::flash($key, $value);
+        return $this;
+    }
+
+    /**
+     * Flash the old input to the session, to be read back with Input::old().
+     *
+     * @param string $filter
+     * @param array  $items
+     *
+     * @return Redirect|mixed
+     */
+    public function with_input($filter = null, array $items = [])
+    {
+        Input::flash($filter, $items);
+        return $this;
+    }
+
+    /**
+     * Flash an error message to the session.
+     *
+     * @param Validator|Messages $container
+     *
+     * @return Redirect|mixed
+     */
+    public function with_errors($container)
+    {
+        return $this->with('errors', ($container instanceof Validator) ? $container->errors : $container);
+    }
+
+    /**
+     * Send the redirect response to the browser.
+     */
+    public function send()
+    {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        return parent::send();
+    }
+}

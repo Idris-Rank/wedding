@@ -1,0 +1,3130 @@
+<?php
+
+namespace System;
+
+defined('DS') or exit('No direct access.');
+
+use System\Database\Connection;
+
+class Validator
+{
+    /**
+     * Contains the data being validated.
+     *
+     * @var array
+     */
+    public $attributes;
+
+    /**
+     * Contains the list of error messages resulting from the validation process.
+     *
+     * @var Messages
+     */
+    public $errors;
+
+    /**
+     * Contains the list of validation rules.
+     *
+     * @var array
+     */
+    protected $rules = [];
+
+    /**
+     * Contains the list of validation error messages.
+     *
+     * @var array
+     */
+    protected $messages = [];
+
+    /**
+     * Contains the database connection for validating data against the database.
+     *
+     * @var Connection
+     */
+    protected $db;
+
+    /**
+     * Package where validation is executed.
+     *
+     * @var string
+     */
+    protected $package = DEFAULT_PACKAGE;
+
+    /**
+     * Language from which error messages should be retrieved.
+     *
+     * @var string
+     */
+    protected $language;
+
+    /**
+     * List of validation rules that are related to size.
+     *
+     * @var array
+     */
+    protected $sizes = ['size', 'between', 'min', 'max'];
+
+    /**
+     * List of validation rules that are related to numeric values.
+     *
+     * @var array
+     */
+    protected $numerics = ['numeric', 'integer'];
+
+    /**
+     * Attributes an exclude rule removed: not validated, not in validated().
+     *
+     * @var array
+     */
+    protected $excluded = [];
+
+    /**
+     * Whether validation stops at the first attribute that fails.
+     *
+     * @var bool
+     */
+    protected $stop_on_first_failure = false;
+
+    /**
+     * Rules that steer validation rather than check a value.
+     *
+     * @var array
+     */
+    protected static $markers = [
+        'bail', 'sometimes', 'exclude', 'exclude_if', 'exclude_unless', 'exclude_with', 'exclude_without',
+    ];
+
+    /**
+     * Contains the list of custom validators registered by the user.
+     *
+     * @var array
+     */
+    protected static $validators = [];
+
+    /**
+     * Rules that need at least one parameter; without one they are reported as malformed.
+     *
+     * @var array
+     */
+    protected static $parameterized = [
+        'after', 'after_or_equal', 'after_or_equals', 'before', 'before_or_equal', 'before_or_equals',
+        'between', 'count', 'countmax', 'countmin', 'date_equals', 'date_format', 'different', 'digits',
+        'exclude_if', 'exclude_unless', 'exclude_with', 'exclude_without', 'exists', 'gt', 'gte', 'in_array',
+        'lt', 'lte', 'max', 'max_digits', 'min', 'min_digits', 'multiple_of', 'required_if', 'required_unless',
+        'required_with', 'same', 'size', 'unique',
+    ];
+
+    /**
+     * Constructor.
+     *
+     * @param array $attributes
+     * @param array $rules
+     * @param array $messages
+     */
+    public function __construct(array $attributes, array $rules, array $messages = [])
+    {
+        foreach ($rules as $key => &$rule) {
+            $rule = is_string($rule) ? explode('|', $rule) : (($rule instanceof \Closure) ? [$rule] : (array) $rule);
+        }
+
+        unset($rule);
+
+        $this->rules = $rules;
+        $this->messages = $messages;
+        $this->attributes = $attributes;
+    }
+
+    /**
+     * Create a new validator instance.
+     *
+     * @param array $attributes
+     * @param array $rules
+     * @param array $messages
+     *
+     * @return Validator
+     */
+    public static function make(array $attributes, array $rules, array $messages = [])
+    {
+        return new static($attributes, $rules, $messages);
+    }
+
+    /**
+     * Register a custom validator.
+     *
+     * @param string   $name
+     * @param \Closure $validator
+     */
+    public static function register($name, $validator)
+    {
+        static::$validators[$name] = $validator;
+    }
+
+    /**
+     * Check if the validation passes (alias).
+     *
+     * @return bool
+     */
+    public function passes()
+    {
+        return $this->valid();
+    }
+
+    /**
+     * Check if the validation fails (alias).
+     *
+     * @return bool
+     */
+    public function fails()
+    {
+        return $this->invalid();
+    }
+
+    /**
+     * Check if the validation fails.
+     *
+     * @return bool
+     */
+    public function invalid()
+    {
+        return ! $this->valid();
+    }
+
+    /**
+     * Check if the validation passes.
+     *
+     * @return bool
+     */
+    public function valid()
+    {
+        $this->errors = new Messages();
+        $this->excluded = [];
+
+        $this->rules = $this->expand_rules($this->rules);
+
+        foreach ($this->rules as $attribute => $rules) {
+            if ($this->skipped($attribute, $rules)) {
+                continue;
+            }
+
+            $bail = in_array('bail', $rules, true);
+
+            foreach ($rules as $rule) {
+                $this->check($attribute, $rule);
+
+                if ($bail && $this->errors->has($attribute)) {
+                    break;
+                }
+            }
+
+            if ($this->stop_on_first_failure && count($this->errors->messages) > 0) {
+                break;
+            }
+        }
+
+        return 0 === count($this->errors->messages);
+    }
+
+    /**
+     * Stop validating at the first attribute that fails.
+     *
+     * @param bool $stop
+     *
+     * @return $this
+     */
+    public function stop_on_first_failure($stop = true)
+    {
+        $this->stop_on_first_failure = (bool) $stop;
+        return $this;
+    }
+
+    /**
+     * Get the validated data: the attributes that have rules, are present, and were
+     * not excluded. Validates first when that has not been done yet.
+     *
+     * @return array
+     */
+    public function validated()
+    {
+        if (is_null($this->errors)) {
+            $this->valid();
+        }
+
+        if (count($this->errors->messages) > 0) {
+            throw new \RuntimeException('The given data is invalid; check fails() before calling validated().');
+        }
+
+        $data = [];
+
+        foreach (array_keys($this->rules) as $attribute) {
+            if (! isset($this->excluded[$attribute]) && Arr::has($this->attributes, $attribute)) {
+                Arr::set($data, $attribute, Arr::get($this->attributes, $attribute));
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Get the validated data as a collection: $validation->safe()->only(['name']).
+     *
+     * @return Collection
+     */
+    public function safe()
+    {
+        return new Collection($this->validated());
+    }
+
+    /**
+     * Check whether an attribute is skipped: 'sometimes' and absent, or excluded.
+     *
+     * @param string $attribute
+     * @param array  $rules
+     *
+     * @return bool
+     */
+    protected function skipped($attribute, array $rules)
+    {
+        if (in_array('sometimes', $rules, true) && ! Arr::has($this->attributes, $attribute)) {
+            return true;
+        }
+
+        foreach ($rules as $rule) {
+            if (! is_string($rule) || 0 !== strpos($rule, 'exclude')) {
+                continue;
+            }
+
+            list($rule, $parameters) = $this->parse($rule);
+            $this->parameterized($rule, $parameters);
+
+            if ($this->excludes($rule, $parameters)) {
+                $this->excluded[$attribute] = true;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Evaluate an exclude rule.
+     *
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function excludes($rule, array $parameters)
+    {
+        switch ($rule) {
+            case 'exclude':
+                return true;
+
+            case 'exclude_if':
+                return $this->listed(Arr::get($this->attributes, $parameters[0]), array_slice($parameters, 1));
+
+            case 'exclude_unless':
+                return ! $this->listed(Arr::get($this->attributes, $parameters[0]), array_slice($parameters, 1));
+
+            case 'exclude_with':
+                return $this->validate_required($parameters[0], Arr::get($this->attributes, $parameters[0]));
+
+            case 'exclude_without':
+                return ! $this->validate_required($parameters[0], Arr::get($this->attributes, $parameters[0]));
+        }
+
+        return false;
+    }
+
+    /**
+     * Expand every '*' attribute, so the rest of the class sees only real ones.
+     *
+     * @param array $rules
+     *
+     * @return array
+     */
+    protected function expand_rules(array $rules)
+    {
+        $expanded = [];
+
+        foreach ($rules as $attribute => $set) {
+            if (false === strpos((string) $attribute, '*')) {
+                $expanded[$attribute] = $set;
+                continue;
+            }
+
+            foreach ($this->expand($attribute) as $target) {
+                $expanded[$target] = isset($expanded[$target]) ? array_merge($expanded[$target], $set) : $set;
+                $this->inherit_messages($attribute, $target);
+            }
+        }
+
+        return $expanded;
+    }
+
+    /**
+     * Let a message written for 'items.*' answer for 'items.0' as well.
+     *
+     * @param string $wildcard
+     * @param string $target
+     */
+    protected function inherit_messages($wildcard, $target)
+    {
+        foreach ($this->messages as $key => $message) {
+            if (0 === strpos((string) $key, $wildcard.'_')) {
+                $inherited = $target.substr((string) $key, mb_strlen($wildcard, '8bit'));
+
+                if (! array_key_exists($inherited, $this->messages)) {
+                    $this->messages[$inherited] = $message;
+                }
+            }
+        }
+    }
+
+    /**
+     * Expand a '*' attribute into the concrete attributes it stands for.
+     *
+     * @param string $attribute
+     *
+     * @return array
+     */
+    protected function expand($attribute)
+    {
+        if (false === strpos($attribute, '*')) {
+            return [$attribute];
+        }
+
+        list($before, $after) = explode('*', $attribute, 2);
+
+        $before = rtrim($before, '.');
+        $after = ltrim($after, '.');
+        $values = ('' === $before) ? $this->attributes : Arr::get($this->attributes, $before);
+
+        if (! is_array($values)) {
+            return [];
+        }
+
+        $targets = [];
+
+        foreach (array_keys($values) as $key) {
+            $target = ('' === $before) ? (string) $key : $before.'.'.$key;
+            $targets = array_merge($targets, $this->expand(('' === $after) ? $target : $target.'.'.$after));
+        }
+
+        return $targets;
+    }
+
+    /**
+     * Evaluate attribute against a validation rule.
+     *
+     * @param string $attribute
+     * @param string $rule
+     */
+    protected function check($attribute, $rule)
+    {
+        if ($rule instanceof \Closure) {
+            $this->check_closure($attribute, $rule);
+            return;
+        }
+
+        list($rule, $parameters) = $this->parse($rule);
+        $this->parameterized($rule, $parameters);
+
+        if (in_array($rule, static::$markers, true)) {
+            return;
+        }
+
+        $value = Arr::get($this->attributes, $attribute);
+        $validatable = $this->validatable($rule, $attribute, $value);
+
+        if ($validatable && ! $this->{'validate_'.$rule}($attribute, $value, $parameters, $this)) {
+            $this->error($attribute, $rule, $parameters);
+        }
+    }
+
+    /**
+     * Run a closure rule: function ($attribute, $value, $fail). Calling $fail() fails it,
+     * with the given message, a language key such as 'validation.custom.coupon', or
+     * with none the 'closure' line; ':attribute' is replaced. Like any rule that is
+     * not implicit, it is skipped for an empty value.
+     *
+     * @param string   $attribute
+     * @param \Closure $rule
+     */
+    protected function check_closure($attribute, \Closure $rule)
+    {
+        $value = Arr::get($this->attributes, $attribute);
+
+        if (! $this->validatable('closure', $attribute, $value)) {
+            return;
+        }
+
+        $fail = function ($message = null) use ($attribute) {
+            if (is_null($message)) {
+                $message = $this->message($attribute, 'closure');
+            } elseif (preg_match('/^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/i', $message)) {
+                $key = Package::prefix($this->package).$message;
+
+                if (Lang::has($key, $this->language)) {
+                    $message = Lang::line($key)->get($this->language);
+                }
+            }
+
+            $this->errors->add($attribute, str_replace(':attribute', $this->attribute($attribute), $message));
+        };
+
+        $rule($attribute, $value, $fail);
+    }
+
+    /**
+     * Refuse a rule that needs parameters and got none.
+     *
+     * @param string $rule
+     * @param array  $parameters
+     */
+    protected function parameterized($rule, array $parameters)
+    {
+        if (empty($parameters) && in_array($rule, static::$parameterized, true)) {
+            throw new \InvalidArgumentException(sprintf(
+                "The '%s' validation rule requires at least one parameter, e.g. '%s:value'.",
+                $rule,
+                $rule
+            ));
+        }
+    }
+
+    /**
+     * Determine if the attribute can be validated.
+     *
+     * @param string $rule
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validatable($rule, $attribute, $value)
+    {
+        if (! $this->implicit($rule) && in_array('nullable', $this->rules[$attribute], true) && is_null($value)) {
+            return false;
+        }
+
+        return $this->validate_required($attribute, $value) || $this->implicit($rule);
+    }
+
+    /**
+     * Determine if the given rule implies a required attribute.
+     *
+     * @param string $rule
+     *
+     * @return bool
+     */
+    protected function implicit($rule)
+    {
+        return in_array($rule, [
+            'required',
+            'accepted',
+            'required_with',
+            'present',
+            'filled',
+            'required_if',
+            'required_unless',
+            'required_with_all',
+            'required_without',
+            'required_without_all',
+            'missing',
+        ]);
+    }
+
+    /**
+     * Add an error message to the validation errors.
+     *
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     */
+    protected function error($attribute, $rule, array $parameters)
+    {
+        $message = $this->replace($this->message($attribute, $rule), $attribute, $rule, $parameters);
+        $this->errors->add($attribute, $message);
+    }
+
+    /**
+     * Validate that the required attribute is present in the attribute array.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_required($attribute, $value)
+    {
+        if (is_null($value)) {
+            return false;
+        }
+
+        if (is_string($value) && '' === trim($value)) {
+            return false;
+        }
+
+        if (! is_null(Input::file($attribute)) && is_array($value) && '' === trim((string) $value['tmp_name'])) {
+            return false;
+        }
+
+        if ((is_array($value) || $value instanceof \Countable) && count($value) < 1) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the attribute is present if any of the given fields are.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_required_with($attribute, $value, array $parameters)
+    {
+        foreach ($parameters as $param) {
+            if ($this->validate_required($param, Arr::get($this->attributes, $param))) {
+                return $this->validate_required($attribute, $value);
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that attribute has been confirmed.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_confirmed($attribute, $value)
+    {
+        return $this->validate_same($attribute, $value, [$attribute.'_confirmation']);
+    }
+
+    /**
+     * Validate that attribute has been accepted.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_accepted($attribute, $value)
+    {
+        return $this->validate_required($attribute, $value)
+            && in_array($value, ['yes', 'on', '1', 1, true, 'true'], true);
+    }
+
+    /**
+     * Validate that attribute is a boolean.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_boolean($attribute, $value)
+    {
+        return in_array($value, [true, false, 0, 1, '0', '1'], true);
+    }
+
+    /**
+     * Validate that attribute is the same as another attribute.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_same($attribute, $value, array $parameters)
+    {
+        $other = $this->other($attribute, $parameters[0]);
+        return Arr::has($this->attributes, $other) && ($value === Arr::get($this->attributes, $other));
+    }
+
+    /**
+     * Validate that attribute is different from another attribute.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_different($attribute, $value, array $parameters)
+    {
+        $other = $this->other($attribute, $parameters[0]);
+        return Arr::has($this->attributes, $other) && ($value !== Arr::get($this->attributes, $other));
+    }
+
+    /**
+     * Validate that attribute is a number.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_numeric($attribute, $value)
+    {
+        return is_numeric($value);
+    }
+
+    /**
+     * Validate that attribute is an integer.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_integer($attribute, $value)
+    {
+        return false !== filter_var($value, FILTER_VALIDATE_INT);
+    }
+
+    /**
+     * Validate the size of the attribute.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_size($attribute, $value, array $parameters)
+    {
+        if (! is_numeric($parameters[0])) {
+            return false;
+        }
+
+        return $this->size($attribute, $value) == $parameters[0];
+    }
+
+    /**
+     * Validate that the size of the attribute is between a range of values.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_between($attribute, $value, array $parameters)
+    {
+        $size = $this->size($attribute, $value);
+        return ($size >= $parameters[0] && $size <= $parameters[1]);
+    }
+
+    /**
+     * Validate that the size of the attribute is greater than the minimum value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_min($attribute, $value, array $parameters)
+    {
+        return $this->size($attribute, $value) >= $parameters[0];
+    }
+
+    /**
+     * Validate that the size of the attribute is less than the maximum value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_max($attribute, $value, array $parameters)
+    {
+        return $this->size($attribute, $value) <= $parameters[0];
+    }
+
+    /**
+     * Validate that the size of the attribute is greater than the minimum value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_gt($attribute, $value, array $parameters)
+    {
+        $other = $this->other($attribute, $parameters[0]);
+
+        if (! Arr::has($this->attributes, $other)) {
+            return false;
+        }
+
+        return $value > Arr::get($this->attributes, $other);
+    }
+
+    /**
+     * Validate that the size of the attribute is greater than or equal to the minimum value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_gte($attribute, $value, array $parameters)
+    {
+        $other = $this->other($attribute, $parameters[0]);
+
+        if (! Arr::has($this->attributes, $other)) {
+            return false;
+        }
+
+        return $value >= Arr::get($this->attributes, $other);
+    }
+
+    /**
+     * Validate that the size of the attribute is less than the maximum value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_lt($attribute, $value, array $parameters)
+    {
+        $other = $this->other($attribute, $parameters[0]);
+
+        if (! Arr::has($this->attributes, $other)) {
+            return false;
+        }
+
+        return $value < Arr::get($this->attributes, $other);
+    }
+
+    /**
+     * Validate that the size of the attribute is less than or equal to the maximum value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_lte($attribute, $value, array $parameters)
+    {
+        $other = $this->other($attribute, $parameters[0]);
+
+        if (! Arr::has($this->attributes, $other)) {
+            return false;
+        }
+
+        return $value <= Arr::get($this->attributes, $other);
+    }
+
+    /**
+     * Validate that the attribute must have digits with exact length.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_digits($attribute, $value, array $parameters)
+    {
+        return (is_string($value) || is_int($value))
+            && 1 === preg_match('/^\d+$/D', (string) $value)
+            && strlen((string) $value) === (int) $parameters[0];
+    }
+
+    /**
+     * Validate that the attribute must have digits with length between minimum and maximum.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_digits_between($attribute, $value, array $parameters)
+    {
+        if (! (is_string($value) || is_int($value)) || 1 !== preg_match('/^\d+$/D', (string) $value)) {
+            return false;
+        }
+
+        $length = strlen((string) $value);
+        return $length >= (int) $parameters[0] && $length <= (int) $parameters[1];
+    }
+
+    /**
+     * Validate that the attribute must be a string.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_string($attribute, $value)
+    {
+        return is_string($value);
+    }
+
+    /**
+     * Validate that the attribute must be a valid JSON string.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_json($attribute, $value)
+    {
+        if (! is_string($value)) {
+            return false;
+        }
+
+        json_decode($value);
+        return json_last_error() === JSON_ERROR_NONE;
+    }
+
+    /**
+     * Validate that the attribute must be a valid timezone.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_timezone($attribute, $value)
+    {
+        return in_array($value, timezone_identifiers_list());
+    }
+
+    /**
+     * Validate that the attribute must be a valid IPv4 address.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_ipv4($attribute, $value)
+    {
+        return filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
+    }
+
+    /**
+     * Validate that the attribute must be a valid IPv6 address.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_ipv6($attribute, $value)
+    {
+        return filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+    }
+
+    /**
+     * Validate that the attribute must not match the given regex pattern.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_not_regex($attribute, $value, array $parameters)
+    {
+        try {
+            return 1 !== preg_match(implode(',', $parameters), (string) $value);
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute must be present in the input, even if empty.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_present($attribute, $value)
+    {
+        return Arr::has($this->attributes, $attribute);
+    }
+
+    /**
+     * Validate that the attribute must be present in the input and not empty.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_filled($attribute, $value)
+    {
+        return $this->validate_required($attribute, $value);
+    }
+
+    /**
+     * Validate that the attribute must be a valid file.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_file($attribute, $value)
+    {
+        return $this->uploaded($value);
+    }
+
+    /**
+     * Determine if the value is a file that was really uploaded over HTTP.
+     *
+     * @param mixed $value
+     *
+     * @return bool
+     */
+    protected function uploaded($value)
+    {
+        return is_array($value)
+            && isset($value['tmp_name'])
+            && is_string($value['tmp_name'])
+            && '' !== $value['tmp_name']
+            && is_uploaded_file($value['tmp_name']);
+    }
+
+    /**
+     * Validate that the attribute must have a given MIME type.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_mimetypes($attribute, $value, array $parameters)
+    {
+        if (! $this->uploaded($value)) {
+            return false;
+        }
+
+        $mime = finfo_file(finfo_open(FILEINFO_MIME_TYPE), $value['tmp_name']);
+        return in_array($mime, $parameters);
+    }
+
+    /**
+     * Validate that the attribute must have a valid image dimensions.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_dimensions($attribute, $value, array $parameters)
+    {
+        if (! $this->uploaded($value)) {
+            return false;
+        }
+
+        $image = getimagesize($value['tmp_name']);
+
+        if (! $image) {
+            return false;
+        }
+
+        $dimensions = [];
+
+        foreach ($parameters as $parameter) {
+            list($key, $val) = explode('=', $parameter);
+            $dimensions[$key] = $val;
+        }
+
+        if (isset($dimensions['width']) && $image[0] != $dimensions['width']) {
+            return false;
+        }
+
+        if (isset($dimensions['height']) && $image[1] != $dimensions['height']) {
+            return false;
+        }
+
+        if (isset($dimensions['min_width']) && $image[0] < $dimensions['min_width']) {
+            return false;
+        }
+
+        if (isset($dimensions['max_width']) && $image[0] > $dimensions['max_width']) {
+            return false;
+        }
+
+        if (isset($dimensions['min_height']) && $image[1] < $dimensions['min_height']) {
+            return false;
+        }
+
+        if (isset($dimensions['max_height']) && $image[1] > $dimensions['max_height']) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the attribute must not have any duplicate array elements.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_distinct($attribute, $value)
+    {
+        if (! is_array($value)) {
+            return true;
+        }
+
+        $items = array_map(function ($item) {
+            return (is_scalar($item) || is_null($item)) ? (string) $item : json_encode($item);
+        }, $value);
+
+        return count($items) === count(array_unique($items));
+    }
+
+    /**
+     * Validate that the attribute ends with a given value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_ends_with($attribute, $value, array $parameters)
+    {
+        if (! is_string($value)) {
+            return false;
+        }
+
+        foreach ($parameters as $end) {
+            if (substr($value, -strlen($end)) === $end) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Validate that the attribute starts with a given value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_starts_with($attribute, $value, array $parameters)
+    {
+        if (! is_string($value)) {
+            return false;
+        }
+
+        foreach ($parameters as $start) {
+            if (strpos($value, $start) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Validate that the attribute must be in the given array.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_in_array($attribute, $value, array $parameters)
+    {
+        $other = Arr::get($this->attributes, rtrim(rtrim($parameters[0], '*'), '.'));
+        return is_array($other) && in_array($value, $other);
+    }
+
+    /**
+     * Validate that the attribute must have an equal date value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_date_equals($attribute, $value, array $parameters)
+    {
+        try {
+            return (new \DateTime($value)) == (new \DateTime($parameters[0]));
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute must be present if the second field is equal to any value.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_required_if($attribute, $value, array $parameters)
+    {
+        $other = Arr::get($this->attributes, $parameters[0]);
+
+        if ($this->listed($other, array_slice($parameters, 1))) {
+            return $this->validate_required($attribute, $value);
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the attribute is required unless the condition is met.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_required_unless($attribute, $value, array $parameters)
+    {
+        $other = Arr::get($this->attributes, $parameters[0]);
+
+        if (! $this->listed($other, array_slice($parameters, 1))) {
+            return $this->validate_required($attribute, $value);
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the attribute is required with all other attributes.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_required_with_all($attribute, $value, array $parameters)
+    {
+        foreach ($parameters as $param) {
+            if (! $this->validate_required($param, Arr::get($this->attributes, $param))) {
+                return true;
+            }
+        }
+
+        return $this->validate_required($attribute, $value);
+    }
+
+    /**
+     * Validate that the attribute is required without any other attributes.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_required_without($attribute, $value, array $parameters)
+    {
+        foreach ($parameters as $param) {
+            if (! $this->validate_required($param, Arr::get($this->attributes, $param))) {
+                return $this->validate_required($attribute, $value);
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the attribute is required without all other attributes.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_required_without_all($attribute, $value, array $parameters)
+    {
+        foreach ($parameters as $param) {
+            if ($this->validate_required($param, Arr::get($this->attributes, $param))) {
+                return true;
+            }
+        }
+
+        return $this->validate_required($attribute, $value);
+    }
+
+    /**
+     * Validate that the attribute is nullable (not required if null).
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_nullable($attribute, $value)
+    {
+        return $value === null || $this->validate_required($attribute, $value);
+    }
+
+    /**
+     * Get the size of the attribute.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return mixed
+     */
+    protected function size($attribute, $value)
+    {
+        if (is_numeric($value) && $this->has_rule($attribute, $this->numerics)) {
+            return $value;
+        }
+
+        if (is_array($value) && isset($value['size']) && array_key_exists($attribute, (array) Input::file())) {
+            return $value['size'] / 1024;
+        }
+
+        if (is_array($value) || $value instanceof \Countable) {
+            return count($value);
+        }
+
+        return Str::length(trim((string) $value));
+    }
+
+    /**
+     * Validate that the attribute is in the array.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_in($attribute, $value, array $parameters)
+    {
+        return $this->listed($value, $parameters);
+    }
+
+    /**
+     * Determine if a scalar value is one of the given strings, compared strictly.
+     *
+     * @param mixed $value
+     * @param array $list
+     *
+     * @return bool
+     */
+    protected function listed($value, array $list)
+    {
+        return is_scalar($value) && in_array((string) $value, array_map('strval', $list), true);
+    }
+
+    /**
+     * Validate that the attribute is not in the array.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_not_in($attribute, $value, array $parameters)
+    {
+        return is_scalar($value) && ! $this->listed($value, $parameters);
+    }
+
+    /**
+     * Validate the uniqueness of the attribute value in the database table.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_unique($attribute, $value, array $parameters)
+    {
+        if (! is_scalar($value)) {
+            return false;
+        }
+
+        if (isset($parameters[1]) && '' !== $parameters[1]) {
+            $attribute = $parameters[1];
+        }
+
+        $this->identifiers('unique', [$parameters[0], $attribute, isset($parameters[3]) ? $parameters[3] : 'id']);
+        $query = $this->db()->table($parameters[0])->where($attribute, '=', $value);
+
+        if (isset($parameters[2])) {
+            $query->where(isset($parameters[3]) ? $parameters[3] : 'id', '<>', $parameters[2]);
+        }
+
+        return 0 === (int) $query->count();
+    }
+
+    /**
+     * Validate that the value of the attribute exists in the database table.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_exists($attribute, $value, array $parameters)
+    {
+        $query = $this->db()->table($parameters[0]);
+        $attribute = (isset($parameters[1]) && '' !== $parameters[1]) ? $parameters[1] : $attribute;
+        $this->identifiers('exists', [$parameters[0], $attribute]);
+
+        if (is_array($value)) {
+            foreach ($value as $item) {
+                if (! is_scalar($item)) {
+                    return false;
+                }
+            }
+
+            $value = array_unique($value);
+            return (int) $query->where_in($attribute, $value)->distinct()->count($attribute) === count($value);
+        }
+
+        if (! is_scalar($value)) {
+            return false;
+        }
+
+        return (int) $query->where($attribute, '=', $value)->count() >= 1;
+    }
+
+    /**
+     * Refuse table and column names that are not plain identifiers. They are wrapped
+     * when queried, so this is not about injection, but a name built from input
+     * ('unique:users,email,'.$id with $id "5,password") must not pass unnoticed.
+     *
+     * @param string $rule
+     * @param array  $names
+     */
+    protected function identifiers($rule, array $names)
+    {
+        foreach ($names as $name) {
+            if (! preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/', (string) $name)) {
+                throw new \InvalidArgumentException(
+                    sprintf("Invalid table or column name in the '%s' rule: %s", $rule, $name)
+                );
+            }
+        }
+    }
+
+    /**
+     * Build a 'unique' rule whose ignored ID cannot add parameters of its own: a value
+     * such as "5,password" stays one quoted value.
+     *
+     *     'email' => ['required', 'email', Validator::unique_rule('users', 'email', $user->id)]
+     *
+     * @param string          $table
+     * @param string|null     $column
+     * @param int|string|null $ignore
+     * @param string          $id_column
+     *
+     * @return string
+     */
+    public static function unique_rule($table, $column = null, $ignore = null, $id_column = 'id')
+    {
+        $quote = function ($value) {
+            $value = (string) $value;
+
+            if ('\\' === substr($value, -1)) {
+                throw new \InvalidArgumentException('An ignored ID may not end with a backslash.');
+            }
+
+            return '"'.str_replace('"', '""', $value).'"';
+        };
+
+        $parameters = [$table, is_null($column) ? '' : $column];
+
+        if (! is_null($ignore)) {
+            $parameters[] = $quote($ignore);
+            $parameters[] = $id_column;
+        }
+
+        return 'unique:'.implode(',', $parameters);
+    }
+
+    /**
+     * Validate that the attribute is a valid IP address.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_ip($attribute, $value)
+    {
+        return false !== filter_var($value, FILTER_VALIDATE_IP);
+    }
+
+    /**
+     * Validate that the attribute is a valid email address.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_email($attribute, $value)
+    {
+        return false !== filter_var($value, FILTER_VALIDATE_EMAIL);
+    }
+
+    /**
+     * Validate that the attribute is a valid URL.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_url($attribute, $value)
+    {
+        return false !== filter_var($value, FILTER_VALIDATE_URL);
+    }
+
+    /**
+     * Validate that the attribute is a valid UUID (v4).
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_uuid($attribute, $value)
+    {
+        try {
+            return is_string($value)
+                ? (bool) preg_match('/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/Di', $value)
+                : false;
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute is an active URL.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_active_url($attribute, $value)
+    {
+        if (! is_string($value)) {
+            return false;
+        }
+
+        $url = trim($value);
+
+        if (
+            ! filter_var($url, FILTER_VALIDATE_URL)
+            || ! in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true)
+        ) {
+            return false;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+        return is_string($host) && '' !== $host && (checkdnsrr($host, 'A') || checkdnsrr($host, 'AAAA'));
+    }
+
+    /**
+     * Validate that the attribute is an image (jpeg, png, gif, bmp, svg or webp).
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_image($attribute, $value, array $parameters = [])
+    {
+        $types = ['jpeg', 'png', 'gif', 'bmp', 'webp'];
+
+        if (in_array('allow_svg', $parameters)) {
+            $types[] = 'svg';
+        }
+
+        return $this->validate_mimes($attribute, $value, $types);
+    }
+
+    /**
+     * Validate that the attribute is an alphabetic string.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_alpha($attribute, $value)
+    {
+        try {
+            return is_string($value) && 1 === preg_match('/^[\pL\pM]+$/u', $value);
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute is an alphanumeric string.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_alpha_num($attribute, $value)
+    {
+        try {
+            return (is_string($value) || is_numeric($value))
+                ? (1 === preg_match('/^[\pL\pM\pN]+$/u', $value))
+                : false;
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute is an alphanumeric string with dashes and underscores.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_alpha_dash($attribute, $value)
+    {
+        try {
+            return (is_string($value) || is_numeric($value))
+                ? (1 === preg_match('/^[\pL\pM\pN_-]+$/u', $value))
+                : false;
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute matches the given regex pattern.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_match($attribute, $value, array $parameters)
+    {
+        try {
+            return 1 === preg_match(implode(',', (array) $parameters), (string) $value);
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute passes the given regex pattern.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_regex($attribute, $value, array $parameters)
+    {
+        try {
+            return 1 === preg_match(implode(',', $parameters), (string) $value);
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute has a valid MIME type.
+     *
+     * @param string $attribute
+     * @param array  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_mimes($attribute, $value, array $parameters)
+    {
+        if (! $this->uploaded($value)) {
+            return false;
+        }
+
+        $finfo = @finfo_open(FILEINFO_MIME_TYPE);
+        $mime = $finfo ? @finfo_file($finfo, $value['tmp_name']) : false;
+        $finfo && PHP_VERSION_ID < 80100 && @finfo_close($finfo);
+        $pool = \System\Foundation\Http\Upload::$extensions;
+
+        if (! is_string($mime) || ! isset($pool[$mime])) {
+            return false;
+        }
+
+        return count(array_intersect($pool[$mime], array_map('strtolower', $parameters))) > 0;
+    }
+
+    /**
+     * Validate that the attribute is an array.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_array($attribute, $value, array $parameters = [])
+    {
+        if (! is_array($value)) {
+            return false;
+        }
+
+        if (0 === count($parameters)) {
+            return true;
+        }
+
+        return 0 === count(array_diff_key($value, array_fill_keys($parameters, '')));
+    }
+
+    /**
+     * Validate that the attribute is an array and has the same number of elements.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_count($attribute, $value, array $parameters)
+    {
+        return $this->validate_array($attribute, $value) && (int) $parameters[0] === count($value);
+    }
+
+    /**
+     * Validate that the attribute is an array and has at least the number of given elements.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_countmin($attribute, $value, array $parameters)
+    {
+        return ($this->validate_array($attribute, $value) && count($value) >= $parameters[0]);
+    }
+
+    /**
+     * Validate that the attribute is an array and has at most the number of given elements.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_countmax($attribute, $value, array $parameters)
+    {
+        return ($this->validate_array($attribute, $value) && count($value) <= $parameters[0]);
+    }
+
+    /**
+     * Validate that the attribute is an array and has numbers of elements between the given range.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_countbetween($attribute, $value, array $parameters)
+    {
+        return ($this->validate_array($attribute, $value)
+            && count($value) >= $parameters[0] && count($value) <= $parameters[1]);
+    }
+
+    /**
+     * Validate that the attribute's date is before the given date.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_before($attribute, $value, array $parameters)
+    {
+        try {
+            return (new \DateTime($value)) < (new \DateTime($parameters[0]));
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the value is a date after or equal to the given date.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_after_or_equals($attribute, $value, array $parameters)
+    {
+        try {
+            return (new \DateTime($value)) >= (new \DateTime($parameters[0]));
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the value is a date after or equal to the given date (alias).
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_after_or_equal($attribute, $value, array $parameters)
+    {
+        return $this->validate_after_or_equals($attribute, $value, $parameters);
+    }
+
+    /**
+     * Validate that the value is a date before or equal to the given date (alias).
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_before_or_equal($attribute, $value, array $parameters)
+    {
+        return $this->validate_before_or_equals($attribute, $value, $parameters);
+    }
+
+    /**
+     * Validate that the value is entirely lowercase.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_lowercase($attribute, $value)
+    {
+        return is_string($value) && $value === Str::lower($value);
+    }
+
+    /**
+     * Validate that the value is entirely uppercase.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_uppercase($attribute, $value)
+    {
+        return is_string($value) && $value === Str::upper($value);
+    }
+
+    /**
+     * Validate that the value only holds 7-bit ascii characters.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_ascii($attribute, $value)
+    {
+        return (is_string($value) || is_numeric($value)) && 1 === preg_match('/^[\x00-\x7F]*$/', (string) $value);
+    }
+
+    /**
+     * Validate that the value is a decimal with the given number of decimal places.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_decimal($attribute, $value, array $parameters)
+    {
+        if (! is_numeric($value)) {
+            return false;
+        }
+
+        $value = (string) $value;
+        $decimals = (false === strpos($value, '.')) ? 0 : strlen(substr($value, strpos($value, '.') + 1));
+
+        $min = (int) $parameters[0];
+        $max = isset($parameters[1]) ? (int) $parameters[1] : $min;
+
+        return $decimals >= $min && $decimals <= $max;
+    }
+
+    /**
+     * Validate that the value is a multiple of the given number.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_multiple_of($attribute, $value, array $parameters)
+    {
+        if (! is_numeric($value) || ! isset($parameters[0]) || ! is_numeric($parameters[0])) {
+            return false;
+        }
+
+        if (0.0 === (float) $parameters[0]) {
+            return false;
+        }
+
+        $result = (float) $value / (float) $parameters[0];
+        return abs($result - round($result)) < 1e-9 * max(1, abs($result));
+    }
+
+    /**
+     * Validate that the value holds at most the given number of digits.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_max_digits($attribute, $value, array $parameters)
+    {
+        return is_numeric($value)
+            && strlen((string) preg_replace('/\D/', '', (string) $value)) <= (int) $parameters[0];
+    }
+
+    /**
+     * Validate that the value holds at least the given number of digits.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_min_digits($attribute, $value, array $parameters)
+    {
+        return is_numeric($value)
+            && strlen((string) preg_replace('/\D/', '', (string) $value)) >= (int) $parameters[0];
+    }
+
+    /**
+     * Validate that the value does not start with any of the given values.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_doesnt_start_with($attribute, $value, array $parameters)
+    {
+        return ! $this->validate_starts_with($attribute, $value, $parameters);
+    }
+
+    /**
+     * Validate that the value does not end with any of the given values.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_doesnt_end_with($attribute, $value, array $parameters)
+    {
+        return ! $this->validate_ends_with($attribute, $value, $parameters);
+    }
+
+    /**
+     * Validate that the value contains every one of the given values.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_contains($attribute, $value, array $parameters)
+    {
+        if (! is_array($value)) {
+            return false;
+        }
+
+        foreach ($parameters as $parameter) {
+            if (! in_array($parameter, $value)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that the value is a sequential array.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_list($attribute, $value)
+    {
+        if (! is_array($value)) {
+            return false;
+        }
+
+        return (0 === count($value)) || (array_keys($value) === range(0, count($value) - 1));
+    }
+
+    /**
+     * Validate that the attribute is absent from the input.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_missing($attribute, $value)
+    {
+        return ! Arr::has($this->attributes, $attribute);
+    }
+
+    /**
+     * Validate that the attribute is absent or empty.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_prohibited($attribute, $value)
+    {
+        return is_null($value) || '' === $value || (is_array($value) && 0 === count($value));
+    }
+
+    /**
+     * Validate that the value counts as declined.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_declined($attribute, $value)
+    {
+        return in_array($value, ['no', 'off', '0', 'false'], true) || false === $value || 0 === $value;
+    }
+
+    /**
+     * Validate that the value is a mac address.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_mac_address($attribute, $value)
+    {
+        if (! is_string($value)) {
+            return false;
+        }
+
+        if (defined('FILTER_VALIDATE_MAC')) {
+            return false !== filter_var($value, FILTER_VALIDATE_MAC);
+        }
+
+        return 1 === preg_match('/^[0-9a-f]{2}([:-])(?:[0-9a-f]{2}\\1){4}[0-9a-f]{2}$/i', $value)
+            || 1 === preg_match('/^(?:[0-9a-f]{4}\\.){2}[0-9a-f]{4}$/i', $value);
+    }
+
+    /**
+     * Validate that the value is a valid ULID.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_ulid($attribute, $value)
+    {
+        return is_string($value) && 1 === preg_match('/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i', $value);
+    }
+
+    /**
+     * Validate that the value is a hexadecimal color.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_hex_color($attribute, $value)
+    {
+        return is_string($value)
+            && 1 === preg_match('/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i', $value);
+    }
+
+    /**
+     * Replace the :date placeholder of the after_or_equals message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_after_or_equals($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':date', $parameters[0], $message);
+    }
+
+    /**
+     * Replace the :date placeholder of the after_or_equal message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_after_or_equal($message, $attribute, $rule, array $parameters)
+    {
+        return $this->replace_after_or_equals($message, $attribute, $rule, $parameters);
+    }
+
+    /**
+     * Replace the :format placeholder of the date_format message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_date_format($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':format', $parameters[0], $message);
+    }
+
+    /**
+     * Replace the :values placeholder of the doesnt_start_with message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_doesnt_start_with($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace the :values placeholder of the doesnt_end_with message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_doesnt_end_with($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace the :value placeholder of the multiple_of message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_multiple_of($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':value', $parameters[0], $message);
+    }
+
+    /**
+     * Replace the :max placeholder of the max_digits message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_max_digits($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':max', $parameters[0], $message);
+    }
+
+    /**
+     * Replace the :min placeholder of the min_digits message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_min_digits($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':min', $parameters[0], $message);
+    }
+
+    /**
+     * Replace the :decimal placeholder of the decimal message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_decimal($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':decimal', implode('-', $parameters), $message);
+    }
+
+    /**
+     * Replace the :values placeholder of the contains message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_contains($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Validate that the attribute is before or equal to a given date.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_before_or_equals($attribute, $value, array $parameters)
+    {
+        try {
+            return (new \DateTime($value)) <= (new \DateTime($parameters[0]));
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the attribute is a valid date.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     *
+     * @return bool
+     */
+    protected function validate_date($attribute, $value)
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return true;
+        }
+
+        try {
+            if ((! is_string($value) && ! is_numeric($value)) || strtotime($value) === false) {
+                return false;
+            }
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+
+        $date = date_parse($value);
+        return checkdate($date['month'], $date['day'], $date['year']);
+    }
+
+    /**
+     * Validate that the date is after the given date.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_after($attribute, $value, array $parameters)
+    {
+        try {
+            return (new \DateTime($value)) > (new \DateTime($parameters[0]));
+        } catch (\Throwable $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that the date is matches the given format.
+     *
+     * @param string $attribute
+     * @param mixed  $value
+     * @param array  $parameters
+     *
+     * @return bool
+     */
+    protected function validate_date_format($attribute, $value, array $parameters)
+    {
+        if (! is_string($parameters[0]) && ! is_numeric($parameters[0])) {
+            return false;
+        }
+
+        if (! is_string($value) && ! is_numeric($value)) {
+            return false;
+        }
+
+        $date = date_create_from_format($parameters[0], (string) $value);
+        return false !== $date && $date->format($parameters[0]) === (string) $value;
+    }
+
+    /**
+     * Get the proper error messages.
+     *
+     * @param string $attribute
+     * @param string $rule
+     *
+     * @return string
+     */
+    protected function message($attribute, $rule)
+    {
+        $package = Package::prefix($this->package);
+        $custom = $attribute.'_'.$rule;
+
+        if (array_key_exists($custom, $this->messages)) {
+            return $this->messages[$custom];
+        }
+
+        if (Lang::has($custom = $package.'validation.custom.'.$custom, $this->language)) {
+            return Lang::line($custom)->get($this->language);
+        }
+
+        if (array_key_exists($rule, $this->messages)) {
+            return $this->messages[$rule];
+        }
+
+        if (in_array($rule, $this->sizes)) {
+            return $this->size_message($package, $attribute, $rule);
+        }
+
+        return Lang::line($package.'validation.'.$rule)->get($this->language);
+    }
+
+    /**
+     * Get the proper error message for an attribute and size rule.
+     *
+     * @param string $package
+     * @param string $attribute
+     * @param string $rule
+     *
+     * @return string
+     */
+    protected function size_message($package, $attribute, $rule)
+    {
+        $value = Arr::get($this->attributes, $attribute);
+
+        if ($this->has_rule($attribute, $this->numerics)) {
+            $line = 'numeric';
+        } elseif (array_key_exists($attribute, Input::file())) {
+            $line = 'file';
+        } elseif (is_array($value) || $value instanceof \Countable) {
+            $line = 'array';
+        } else {
+            $line = 'string';
+        }
+
+        return Lang::line($package.'validation.'.$rule.'.'.$line)->get($this->language);
+    }
+
+    /**
+     * Replace all placeholders in the error message.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace($message, $attribute, $rule, array $parameters)
+    {
+        $message = str_replace(':attribute', $this->attribute($attribute), $message);
+        return method_exists($this, 'replace_'.$rule)
+            ? $this->{'replace_'.$rule}($message, $attribute, $rule, $parameters)
+            : $message;
+    }
+
+    /**
+     * Replace placeholders for the 'required_with' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_required_with($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':field', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'between' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_between($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace([':min', ':max'], $parameters, $message);
+    }
+
+    /**
+     * Replace placeholders for the 'size' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_size($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':size', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'min' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_min($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':min', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'max' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_max($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':max', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'in' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_in($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'not_in' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_not_in($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'mimes' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_mimes($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'same' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_same($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':other', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'different' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_different($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':other', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'before' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_before($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':date', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'before_or_equals' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_before_or_equals($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':date', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'before_or_equal' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_before_or_equal($message, $attribute, $rule, array $parameters)
+    {
+        return $this->replace_before_or_equals($message, $attribute, $rule, $parameters);
+    }
+
+    /**
+     * Replace placeholders for the 'after' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_after($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':date', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'count' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_count($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':count', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'countmin' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_countmin($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':min', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'countmax' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_countmax($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':max', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'countbetween' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_countbetween($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace([':min', ':max'], $parameters, $message);
+    }
+
+    /**
+     * Replace placeholders for the 'gt' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_gt($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':value', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'gte' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_gte($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':value', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'lt' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_lt($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':value', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'lte' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_lte($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':value', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'digits' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_digits($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':digits', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'digits_between' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_digits_between($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace([':min', ':max'], $parameters, $message);
+    }
+
+    /**
+     * Replace placeholders for the 'mimetypes' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_mimetypes($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'ends_with' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_ends_with($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'starts_with' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_starts_with($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', $parameters), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'in_array' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_in_array($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':other', $this->attribute($parameters[0]), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'date_equals' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_date_equals($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':date', $parameters[0], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'required_if' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_required_if($message, $attribute, $rule, array $parameters)
+    {
+        $other = $this->attribute($parameters[0]);
+        $values = implode(', ', array_slice($parameters, 1));
+        return str_replace([':other', ':value'], [$other, $values], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'required_unless' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_required_unless($message, $attribute, $rule, array $parameters)
+    {
+        $other = $this->attribute($parameters[0]);
+        $values = implode(', ', array_slice($parameters, 1));
+        return str_replace([':other', ':value'], [$other, $values], $message);
+    }
+
+    /**
+     * Replace placeholders for the 'required_with_all' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_required_with_all($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', array_map([$this, 'attribute'], $parameters)), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'required_without' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_required_without($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', array_map([$this, 'attribute'], $parameters)), $message);
+    }
+
+    /**
+     * Replace placeholders for the 'required_without_all' rule.
+     *
+     * @param string $message
+     * @param string $attribute
+     * @param string $rule
+     * @param array  $parameters
+     *
+     * @return string
+     */
+    protected function replace_required_without_all($message, $attribute, $rule, array $parameters)
+    {
+        return str_replace(':values', implode(', ', array_map([$this, 'attribute'], $parameters)), $message);
+    }
+
+    /**
+     * Get the name of the attribute from the given attribute.
+     *
+     * @param string $attribute
+     *
+     * @return string
+     */
+    protected function attribute($attribute)
+    {
+        $package = Package::prefix($this->package);
+        $line = $package.'validation.attributes.'.$attribute;
+
+        return Lang::has($line, $this->language)
+            ? Lang::line($line)->get($this->language)
+            : str_replace('_', ' ', $attribute);
+    }
+
+    /**
+     * Resolve the other attribute a rule refers to, filling its '*' segments
+     * from the attribute under validation (e.g. 'items.*.min' for 'items.0.qty').
+     *
+     * @param string $attribute
+     * @param string $other
+     *
+     * @return string
+     */
+    protected function other($attribute, $other)
+    {
+        if (false === strpos($other, '*')) {
+            return $other;
+        }
+
+        $segments = explode('.', $attribute);
+        $parts = explode('.', $other);
+
+        foreach ($parts as $index => $part) {
+            if ('*' === $part && isset($segments[$index])) {
+                $parts[$index] = $segments[$index];
+            }
+        }
+
+        return implode('.', $parts);
+    }
+
+    /**
+     * Determine if the attribute has a rule set for it.
+     *
+     * @param string $attribute
+     * @param array  $rules
+     *
+     * @return bool
+     */
+    protected function has_rule($attribute, $rules)
+    {
+        if (! isset($this->rules[$attribute])) {
+            return false;
+        }
+
+        foreach ($this->rules[$attribute] as $rule) {
+            if ($rule instanceof \Closure) {
+                continue;
+            }
+
+            list($rule, $parameters) = $this->parse($rule);
+
+            if (in_array($rule, $rules)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Get the name and parameter rule from a rule.
+     *
+     * @param string $rule
+     *
+     * @return array
+     */
+    protected function parse($rule)
+    {
+        $rule = (string) $rule;
+        $parameters = (false !== ($colon = strpos($rule, ':')))
+            ? str_getcsv(substr($rule, $colon + 1), ',', '"', '\\')
+            : [];
+
+        return [is_numeric($colon) ? substr($rule, 0, $colon) : $rule, $parameters];
+    }
+
+    /**
+     * Set the package running the validator, which picks the validation language.
+     *
+     * @param string $package
+     *
+     * @return $this
+     */
+    public function package($package)
+    {
+        $this->package = $package;
+        return $this;
+    }
+
+    /**
+     * Set the language from which error messages should be retrieved.
+     *
+     * @param string $language
+     *
+     * @return $this
+     */
+    public function speaks($language)
+    {
+        $this->language = $language;
+        return $this;
+    }
+
+    /**
+     * Set the database connection that should be used by the validator.
+     *
+     * @param Connection $connection
+     *
+     * @return $this
+     */
+    public function connection(Connection $connection)
+    {
+        $this->db = $connection;
+        return $this;
+    }
+
+    /**
+     * Get the database connection that should be used by the validator.
+     *
+     * @return Connection
+     */
+    protected function db()
+    {
+        return $this->db = is_null($this->db) ? Database::connection() : $this->db;
+    }
+
+    /**
+     * Handle custom validator calls.
+     *
+     * @param string $method
+     * @param array  $parameters
+     *
+     * @return mixed
+     */
+    public function __call($method, $parameters)
+    {
+        if (isset(static::$validators[$method = substr($method, 9)])) {
+            return call_user_func_array(static::$validators[$method], $parameters);
+        }
+
+        throw new \Exception(sprintf('Method does not exists: %s', $method));
+    }
+}

@@ -1,0 +1,1108 @@
+<?php
+
+namespace System;
+
+defined('DS') or exit('No direct access.');
+
+class Blade
+{
+    /**
+     * Marker that keeps a compiled view from being served directly by a web server.
+     *
+     * @var string
+     */
+    const GUARD = "<?php defined('DS') or exit('No direct access.');?>";
+
+    /**
+     * Directory where the cached views are stored.
+     *
+     * @var string
+     */
+    public static $directory;
+
+    /**
+     * List of compiler names.
+     *
+     * @var array
+     */
+    protected static $compilers = [
+        'extensions',
+        'layout',
+        'comment',
+        'verbatim',
+        'component',
+        'props',
+        'once',
+        'endonce',
+        'echo',
+        'csrf',
+        'forelse',
+        'empty',
+        'endempty',
+        'endforelse',
+        'structure_start',
+        'foreach',
+        'structure_end',
+        'else',
+        'unless',
+        'endunless',
+        'error',
+        'enderror',
+        'guest',
+        'endguest',
+        'auth',
+        'endauth',
+        'can',
+        'endcan',
+        'include',
+        'render_each',
+        'render',
+        'yield',
+        'set',
+        'unset',
+        'json',
+        'show',
+        'section_start',
+        'section_end',
+        'inject',
+        'method',
+        'push',
+        'endpush',
+        'stack',
+        'hassection',
+        'sectionmissing',
+    ];
+
+    /**
+     * Contains the keys of @once blocks that have already been rendered.
+     *
+     * @var array
+     */
+    protected static $onces = [];
+
+    /**
+     * Contains custom compilers names created by the user.
+     *
+     * @var array
+     */
+    protected static $extensions = [];
+
+    /**
+     * Cache for translated blade.
+     *
+     * @var array
+     */
+    protected static $translated = [];
+
+    /**
+     * Cache of view path to compiled file path.
+     *
+     * @var array
+     */
+    protected static $compiles = [];
+
+    /**
+     * Whether a compiled view is checked against the template's mtime before being
+     * reused. Costs one stat per template; turn it off and run 'php rakit clear:views'
+     * on every deploy instead.
+     *
+     * @var bool
+     */
+    public static $reload = true;
+
+    /**
+     * Register blade engine.
+     */
+    public static function sharpen()
+    {
+        Hook::listen(View::ENGINE, function ($view) {
+            if (! Str::ends_with($view->path, '.blade.php')) {
+                return;
+            }
+
+            $compiled = static::compiled($view->path);
+
+            try {
+                if (static::stale($view->path, $compiled)) {
+                    $temp = $compiled.'.'.uniqid('', true).'.tmp';
+                    file_put_contents($temp, static::GUARD.static::compile($view));
+
+                    if (! rename($temp, $compiled)) {
+                        unlink($temp);
+                    }
+                }
+            } catch (\Throwable $e) {
+                return ltrim($view->get());
+            } catch (\Exception $e) {
+                return ltrim($view->get());
+            }
+
+            $view->path = $compiled;
+
+            try {
+                return ltrim($view->get());
+            } catch (\Throwable $e) {
+                Blade\Component::unwind();
+                throw $e;
+            } catch (\Exception $e) {
+                Blade\Component::unwind();
+                throw $e;
+            }
+        });
+    }
+
+    /**
+     * Add custom compiler.
+     *
+     * @param \Closure $compiler
+     */
+    public static function extend(\Closure $compiler)
+    {
+        static::$extensions[] = $compiler;
+    }
+
+    /**
+     * Check whether the compiled file is missing or, with reload on, older than its
+     * template. filemtime() right after is_file() on the same file is served from
+     * PHP's stat cache, so this costs two stats where is_file() plus expired() cost
+     * three. No '@': scream mode would report a silenced warning anyway.
+     *
+     * @param string $path
+     * @param string $compiled
+     *
+     * @return bool
+     */
+    protected static function stale($path, $compiled)
+    {
+        if (! is_file($compiled)) {
+            return true;
+        }
+
+        $time = filemtime($compiled);
+
+        return static::$reload && filemtime($path) > $time;
+    }
+
+    /**
+     * Check if view is expired and needs to be recompiled.
+     *
+     * @param string $path
+     *
+     * @return bool
+     */
+    public static function expired($path)
+    {
+        if (! static::$reload) {
+            return false;
+        }
+
+        return filemtime($path) > filemtime(static::compiled($path));
+    }
+
+    /**
+     * Compile the given view.
+     *
+     * @param \System\View $view
+     *
+     * @return string
+     */
+    public static function compile($view)
+    {
+        return static::translate(Storage::get($view->path), $view);
+    }
+
+    /**
+     * Translate the given string.
+     *
+     * @param string       $value
+     * @param \System\View $view
+     *
+     * @return string
+     */
+    public static function translate($value, $view = null)
+    {
+        $verbatims = [];
+        $value = preg_replace_callback('/@verbatim(.*?)@endverbatim/s', function ($matches) use (&$verbatims) {
+            $token = '___VERBATIM_'.count($verbatims).'___';
+            $verbatims[$token] = $matches[1];
+            return $token;
+        }, $value);
+
+        $value = static::compile_comment($value);
+        $phps = [];
+        $value = preg_replace_callback(
+            '/(?<!@)@php(?:(\((?:[^()]++|(?1))*\))|(.*?)@endphp)/s',
+            function ($matches) use (&$phps) {
+                $token = '___PHP_'.count($phps).'___';
+                $phps[$token] = isset($matches[2]) ? '<?php '.$matches[2].'?>' : '<?php '.$matches[1].'; ?>';
+                return $token;
+            },
+            $value
+        );
+
+        $compilers = static::$compilers;
+
+        foreach ($compilers as $compiler) {
+            if ('csrf' === $compiler && false === strpos($value, '@csrf')) {
+                continue;
+            }
+
+            $value = static::{'compile_'.$compiler}($value, $view);
+        }
+
+        foreach ($phps as $token => $content) {
+            $value = str_replace($token, $content, $value);
+        }
+
+        foreach ($verbatims as $token => $content) {
+            $value = str_replace($token, $content, $value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Translate the <x-name> tags into the calls that render them.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_component($value)
+    {
+        if (false === strpos($value, '<x-')) {
+            return $value;
+        }
+
+        $name = '[A-Za-z0-9_\\-\\.]+(?:::[A-Za-z0-9_\\-\\.]+)?';
+        $attributes = '((?:\\s+[:@]?' . $name . '(?:\\s*=\\s*(?:"[^"]*"|\'[^\']*\'|[^\\s>"\\\']+))?)*)';
+
+        $value = preg_replace_callback('/<x-slot\s+name\s*=\s*(?:"([^"]*)"|\'([^\']*)\')\s*>/', function ($matches) {
+            $slot = ('' === $matches[1]) ? $matches[2] : $matches[1];
+            return '<?php \System\Blade\Component::slot(' . var_export($slot, true) . '); ?>';
+        }, $value);
+
+        $value = preg_replace_callback('/<x-slot:(' . $name . ')\s*>/', function ($matches) {
+            return '<?php \System\Blade\Component::slot(' . var_export($matches[1], true) . '); ?>';
+        }, $value);
+
+        $value = preg_replace('/<\/x-slot\s*>/', '<?php \System\Blade\Component::end_slot(); ?>', $value);
+        $value = preg_replace_callback('/<x-(' . $name . ')' . $attributes . '\s*\/>/', function ($matches) {
+            return '<?php \System\Blade\Component::open('
+                . var_export($matches[1], true) . ', ' . static::component_attributes($matches[2])
+                . '); echo \System\Blade\Component::close(); ?>';
+        }, $value);
+
+        $pattern = '/<x-(?!slot\b)(' . $name . ')' . $attributes . '\s*>((?:(?!<x-(?!slot\b))[\s\S])*?)<\/x-\1\s*>/';
+        $guard = 0;
+
+        while (preg_match($pattern, $value) && $guard++ < 64) {
+            $value = preg_replace_callback($pattern, function ($matches) {
+                return '<?php \System\Blade\Component::open(' . var_export($matches[1], true) . ', '
+                    . static::component_attributes($matches[2]) . '); ?>' . $matches[3]
+                    . '<?php echo \System\Blade\Component::close(); ?>';
+            }, $value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Build the array of the attributes a component tag was given.
+     *
+     * @param string $attributes
+     *
+     * @return string
+     */
+    protected static function component_attributes($attributes)
+    {
+        $pattern = '/([:@]?[A-Za-z0-9_\-\.]+)(\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>"\']+))?/';
+        preg_match_all($pattern, (string) $attributes, $matches, PREG_SET_ORDER);
+
+        $pairs = [];
+
+        foreach ($matches as $match) {
+            $name = $match[1];
+            $bound = (':' === substr($name, 0, 1));
+            $name = ltrim($name, ':@');
+
+            if (! isset($match[2]) || '' === trim($match[2])) {
+                $pairs[] = var_export($name, true) . ' => true';
+                continue;
+            }
+
+            $raw = trim(substr(ltrim($match[2]), 1));
+            $quote = substr($raw, 0, 1);
+
+            if ('"' === $quote || "'" === $quote) {
+                $raw = substr($raw, 1, -1);
+            }
+
+            if (! $bound) {
+                $parts = preg_split('/(\{\{.+?\}\}|\{!!.+?!!\})/s', $raw, -1, PREG_SPLIT_DELIM_CAPTURE);
+                $raw = [];
+
+                foreach ($parts as $index => $part) {
+                    if ($index % 2) {
+                        $raw[] = '(' . trim(substr($part, 2, -2), " \t\r\n!") . ')';
+                    } elseif ('' !== $part || 1 === count($parts)) {
+                        $raw[] = var_export($part, true);
+                    }
+                }
+
+                $raw = (count($parts) > 1 ? "'' . " : '') . implode(' . ', $raw);
+            }
+
+            $pairs[] = var_export($name, true) . ' => ' . $raw;
+        }
+
+        return '[' . implode(', ', $pairs) . ']';
+    }
+
+    /**
+     * Translate @props.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_props($value)
+    {
+        return preg_replace_callback('/@props(\s*(\((?:[^()]++|(?2))*\)))/', function ($matches) {
+            return '<?php extract(\System\Blade\Component::props' . trim($matches[1]) . ', EXTR_OVERWRITE); ?>';
+        }, $value);
+    }
+
+    /**
+     * Translate @php and @endphp.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    public static function compile_php_block($value)
+    {
+        return preg_replace_callback('/(?<!@)@php(.*?)@endphp/s', function ($matches) {
+            return '<?php '.$matches[1].'?>';
+        }, $value);
+    }
+
+    /**
+     * Translate @layout.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_layout($value)
+    {
+        if (! Str::starts_with($value, '@layout')) {
+            return $value;
+        }
+
+        $lines = preg_split('/(\r?\n)/', $value);
+        $lines[] = preg_replace(static::matcher('layout'), '$1@include$2', $lines[0]);
+
+        return implode(CRLF, array_slice($lines, 1));
+    }
+
+    /**
+     * Translate blade comments.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_comment($value)
+    {
+        return preg_replace('/\{\{--(.*?)--\}\}/s', '', $value);
+    }
+
+    /**
+     * Translate blade echo.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_echo($value)
+    {
+        $compiler = function ($str) {
+            // {{ .. or .. }}
+            return preg_replace('/^(\$\w+(?:->\w+|\[[^\]]*\])*)\s+or\s+(.+?)$/s', 'isset($1) ? $1 : $2', $str);
+        };
+
+        // {{{  }}}
+        $matcher = '/\{\{\{\s*(.+?)\s*\}\}\}(\r?\n)?/s';
+        $value = preg_replace_callback($matcher, function ($matches) use ($compiler) {
+            $ws = empty($matches[2]) ? '' : $matches[2].$matches[2];
+            return '<?php echo e('.$compiler($matches[1]).') ?>'.$ws;
+        }, $value);
+
+        // {!!  !!}
+        $matcher = '/\{\!!\s*(.+?)\s*!!\}(\r?\n)?/s';
+        $value = preg_replace_callback($matcher, function ($matches) use ($compiler) {
+            $ws = empty($matches[2]) ? '' : $matches[2].$matches[2];
+            return '<?php echo '.$compiler($matches[1]).' ?>'.$ws;
+        }, $value);
+
+        // @{{  }}, {{  }}
+        $matcher = '/(@)?\{\{\s*(.+?)\s*\}\}(\r?\n)?/s';
+        $value = preg_replace_callback($matcher, function ($matches) use ($compiler) {
+            $ws = empty($matches[3]) ? '' : $matches[3].$matches[3];
+            return $matches[1] ? substr($matches[0], 1) : '<?php echo e('.$compiler($matches[2]).') ?>'.$ws;
+        }, $value);
+
+        return $value;
+    }
+
+    /**
+     * Translate @csrf.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_csrf($value)
+    {
+        return preg_replace('/(?<!@)@csrf\b/', '<?php echo csrf_field() ?>', $value);
+    }
+
+    /**
+     * Translate @set.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_set($value)
+    {
+        $pattern = "/(?<!@)@set\\(\\s*['\"](.*?)['\"]\\s*,((?:[^()]++|(\\((?:[^()]++|(?3))*\\)))*)\\)/";
+        return preg_replace($pattern, '<?php $$1 =$2;?>', $value);
+    }
+
+    /**
+     * Translate @unset.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_unset($value)
+    {
+        return preg_replace("/@unset\(['\"](.*?)['\"]\)/", '<?php unset($$1)?>', $value);
+    }
+
+    /**
+     * Translate @json.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_json($value)
+    {
+        $result = $value;
+        $offset = 0;
+
+        while (($pos = strpos($result, '@json(', $offset)) !== false) {
+            $start = $pos + 6;
+            $depth = 1;
+            $current = $start;
+            $len = strlen($result);
+
+            while ($current < $len && $depth > 0) {
+                if ($result[$current] === '(') {
+                    $depth++;
+                } elseif ($result[$current] === ')') {
+                    $depth--;
+                }
+
+                $current++;
+            }
+
+            if ($depth === 0) {
+                $expression = substr($result, $start, $current - $start - 1);
+                $original = substr($result, $pos, $current - $pos);
+                $flags = JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE;
+                $replacement = '<?php echo json_encode('.trim($expression).', '.$flags.'); ?>';
+                $result = substr_replace($result, $replacement, $pos, strlen($original));
+                $offset = $pos + strlen($replacement);
+            } else {
+                $offset = $pos + 1;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Translate @forelse.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_forelse($value)
+    {
+        preg_match_all('/(\s*)@forelse(\s*(\((?:[^()]++|(?3))*\)))(\s*)/', $value, $matches);
+
+        foreach ($matches[0] as $i => $forelse) {
+            if (! preg_match('/^\s*\((.+)\s+as\s+/s', $matches[2][$i], $variables)) {
+                continue;
+            }
+
+            $variables[1] = trim($variables[1]);
+            $replace = '$1<?php $__loop_stack = isset($__loop_stack) ? $__loop_stack : []; $__loop_stack[] = (object)["index" => -1, "iteration" => 0, "remaining" => count('.$variables[1].'), "count" => count('.$variables[1].'), "first" => false, "last" => false, "even" => false, "odd" => false, "depth" => count($__loop_stack), "parent" => count($__loop_stack) > 0 ? $__loop_stack[count($__loop_stack)-1] : null]; if (count('.$variables[1].') > 0): ?><?php foreach$2: $__loop_stack[count($__loop_stack)-1]->index++; $__loop_stack[count($__loop_stack)-1]->iteration++; $__loop_stack[count($__loop_stack)-1]->remaining--; $__loop_stack[count($__loop_stack)-1]->first = ($__loop_stack[count($__loop_stack)-1]->index === 0); $__loop_stack[count($__loop_stack)-1]->last = ($__loop_stack[count($__loop_stack)-1]->index === $__loop_stack[count($__loop_stack)-1]->count - 1); $__loop_stack[count($__loop_stack)-1]->even = ($__loop_stack[count($__loop_stack)-1]->iteration % 2 === 0); $__loop_stack[count($__loop_stack)-1]->odd = ($__loop_stack[count($__loop_stack)-1]->iteration % 2 !== 0); $loop = $__loop_stack[count($__loop_stack)-1]; ?>';
+            $value = str_replace(
+                $forelse,
+                preg_replace('/(\s*)@forelse(\s*(\((?:[^()]++|(?3))*\)))/', $replace, $forelse),
+                $value
+            );
+        }
+
+        return $value;
+    }
+
+    /**
+     * Translate @empty.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_empty($value)
+    {
+        $value = preg_replace('/(\s*)@empty(\s*(\((?:[^()]++|(?3))*\)))/', '$1<?php if (empty$2): ?>', $value);
+        return preg_replace('/(?<!@)@empty\b/', '<?php endforeach; ?><?php else: ?>', $value);
+    }
+
+    /**
+     * Translate blade @endempty.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endempty($value)
+    {
+        return preg_replace('/(?<!@)@endempty\b/', '<?php endif; ?>', $value);
+    }
+
+    /**
+     * Translate @endforelse.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endforelse($value)
+    {
+        return preg_replace(
+            '/(?<!@)@endforelse\b/',
+            '<?php endif; array_pop($__loop_stack); $loop = count($__loop_stack) ? end($__loop_stack) : null; ?>',
+            $value
+        );
+    }
+
+    /**
+     * Translate control-structure start.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_structure_start($value)
+    {
+        return preg_replace('/(\s*)@(if|elseif|for|while)(\s*(\((?:[^()]++|(?4))*\)))/', '$1<?php $2$3: ?>', $value);
+    }
+
+    /**
+     * Translate control-structure end.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_structure_end($value)
+    {
+        return preg_replace_callback('/(\s*)(?<!@)@(endif|endforeach|endfor|endwhile)\b(\s*)/', function ($matches) {
+            return $matches[1].'<?php '.$matches[2].'; ?>'
+                . (('endforeach' === $matches[2])
+                   ? '<?php array_pop($__loop_stack); $loop = count($__loop_stack) ? end($__loop_stack) : null; ?>'
+                   : '').$matches[3];
+        }, $value);
+    }
+
+    /**
+     * Translate @foreach.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_foreach($value)
+    {
+        return preg_replace_callback('/@foreach(\s*(\((?:[^()]++|(?2))*\)))/', function ($matches) {
+            if (preg_match('/^\s*\((.+)\s+as\s+/s', $matches[1], $arrays)) {
+                return '<?php $__loop_stack = isset($__loop_stack) ? $__loop_stack : []; $__loop_stack[] = (object)["index" => -1, "iteration" => 0, "remaining" => count('.trim($arrays[1]).'), "count" => count('.trim($arrays[1]).'), "first" => false, "last" => false, "even" => false, "odd" => false, "depth" => count($__loop_stack), "parent" => count($__loop_stack) > 0 ? $__loop_stack[count($__loop_stack)-1] : null]; foreach'.$matches[1].': $__loop_stack[count($__loop_stack)-1]->index++; $__loop_stack[count($__loop_stack)-1]->iteration++; $__loop_stack[count($__loop_stack)-1]->remaining--; $__loop_stack[count($__loop_stack)-1]->first = ($__loop_stack[count($__loop_stack)-1]->index === 0); $__loop_stack[count($__loop_stack)-1]->last = ($__loop_stack[count($__loop_stack)-1]->index === $__loop_stack[count($__loop_stack)-1]->count - 1); $__loop_stack[count($__loop_stack)-1]->even = ($__loop_stack[count($__loop_stack)-1]->iteration % 2 === 0); $__loop_stack[count($__loop_stack)-1]->odd = ($__loop_stack[count($__loop_stack)-1]->iteration % 2 !== 0); $loop = $__loop_stack[count($__loop_stack)-1]; ?>';
+            }
+
+            return $matches[0];
+        }, $value);
+    }
+
+    /**
+     * Translate @else.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_else($value)
+    {
+        return preg_replace('/(\s*)(?<!@)@(else)\b(\s*)/', '$1<?php $2: ?>$3', $value);
+    }
+
+    /**
+     * Translate @unless.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_unless($value)
+    {
+        return preg_replace('/(\s*)@unless(\s*(\((?:[^()]++|(?3))*\)))/', '$1<?php if (! ($2)): ?>', $value
+        );
+    }
+
+    /**
+     * Translate @endunless.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endunless($value)
+    {
+        return preg_replace('/(?<!@)@endunless\b/', '<?php endif; ?>', $value);
+    }
+
+    /**
+     * Translate @error.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_error($value)
+    {
+        return preg_replace(static::matcher('error'), '$1<?php if ($errors->has$2): ?>', $value);
+    }
+
+    /**
+     * Translate @enderror.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_enderror($value)
+    {
+        return preg_replace('/(?<!@)@enderror\b/', '<?php endif; ?>', $value);
+    }
+
+    /**
+     * Translate @guest.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_guest($value)
+    {
+        return preg_replace('/(?<!@)@guest\b/', '<?php if (\System\Auth::guest()): ?>', $value);
+    }
+
+    /**
+     * Translate @endguest.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endguest($value)
+    {
+        return preg_replace('/(?<!@)@endguest\b/', '<?php endif; ?>', $value);
+    }
+
+    /**
+     * Translate @auth.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_auth($value)
+    {
+        return preg_replace('/(?<!@)@auth\b/', '<?php if (\System\Auth::check()): ?>', $value);
+    }
+
+    /**
+     * Translate @endauth.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endauth($value)
+    {
+        return preg_replace('/(?<!@)@endauth\b/', '<?php endif; ?>', $value);
+    }
+
+    /**
+     * Translate @can, @cannot and @canany.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_can($value)
+    {
+        $value = preg_replace(static::matcher('canany'), '$1<?php if (\System\Gate::any$2): ?>', $value);
+        $value = preg_replace(static::matcher('cannot'), '$1<?php if (\System\Gate::denies$2): ?>', $value);
+
+        return preg_replace(static::matcher('can'), '$1<?php if (\System\Gate::allows$2): ?>', $value);
+    }
+
+    /**
+     * Translate @endcan, @endcannot and @endcanany.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endcan($value)
+    {
+        return preg_replace('/(?<!@)@end(?:canany|cannot|can)\b/', '<?php endif; ?>', $value);
+    }
+
+    /**
+     * Translate @include.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_include($value)
+    {
+        $replacer = '$1<?php echo \System\Blade::inherit(view$2, get_defined_vars())->render() ?>';
+        return preg_replace(static::matcher('include'), $replacer, $value);
+    }
+
+    /**
+     * Hand the including view's variables to an @include'd view, without
+     * overriding the data it was given explicitly.
+     *
+     * @param \System\View $view
+     * @param array        $variables
+     *
+     * @return \System\View
+     */
+    public static function inherit($view, array $variables)
+    {
+        $view->data = array_merge($variables, $view->data);
+        return $view;
+    }
+
+    /**
+     * Translate @render.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_render($value)
+    {
+        return preg_replace(static::matcher('render'), '$1<?php echo render$2 ?>', $value);
+    }
+
+    /**
+     * Translate @render_each.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_render_each($value)
+    {
+        return preg_replace(static::matcher('render_each'), '$1<?php echo render_each$2 ?>', $value);
+    }
+
+    /**
+     * Translate @yield (shortcut for Section::yield_content()).
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_yield($value)
+    {
+        return preg_replace(static::matcher('yield'), '$1<?php echo yield_content$2 ?>', $value);
+    }
+
+    /**
+     * Translate @show.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_show($value)
+    {
+        return preg_replace('/(?<!@)@show\b/', '<?php echo yield_section() ?>', $value);
+    }
+
+    /**
+     * Translate @section (shortcut for Section::start()).
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_section_start($value)
+    {
+        return preg_replace(static::matcher('section'), '$1<?php section_start$2 ?>', $value);
+    }
+
+    /**
+     * Translate @endsection (shortcut for Section::stop()).
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_section_end($value)
+    {
+        return preg_replace('/(?<!@)@(endsection|stop)\b/', '<?php section_stop() ?>', $value);
+    }
+
+    /**
+     * Translate @inject (shortcut for Section::inject()).
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_inject($value)
+    {
+        return preg_replace(static::matcher('inject'), '$1<?php section_inject$2 ?>', $value);
+    }
+
+    /**
+     * Translate @verbatim (placeholder only, handled by static::translate()).
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_verbatim($value)
+    {
+        return $value;
+    }
+
+    /**
+     * Translate @once.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_once($value)
+    {
+        return preg_replace_callback('/@once(.*?)@endonce/s', function ($matches) {
+            $key = md5($matches[1]);
+            return '<?php if (\System\Blade::once('.var_export($key, true).')): ?>'.$matches[1].'<?php endif; ?>';
+        }, $value);
+    }
+
+    /**
+     * Mark an @once block as rendered, returning true only on the first call per key.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public static function once($key)
+    {
+        if (isset(static::$onces[$key])) {
+            return false;
+        }
+
+        static::$onces[$key] = true;
+        return true;
+    }
+
+    /**
+     * Forget every @once block that has been rendered so far.
+     */
+    public static function forget_onces()
+    {
+        static::$onces = [];
+    }
+
+    public static function reset_state()
+    {
+        static::forget_onces();
+    }
+
+    /**
+     * Translate @endonce (placeholder only, handled by static::compile_once()).
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endonce($value)
+    {
+        return $value;
+    }
+
+    /**
+     * Translate @method to hidden input.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_method($value)
+    {
+        return preg_replace_callback(static::matcher('method'), function ($matches) {
+            $inner = trim($matches[2], " \t\n\r\0\x0B()");
+
+            if ('' === $inner) {
+                return $matches[1].'<input type="hidden" name="_method" value="" />';
+            }
+
+            if (preg_match('/^([\'"])(.*)\1$/s', $inner, $m)) {
+                $literal = $m[2];
+                $escaped = htmlspecialchars($literal, ENT_QUOTES, 'UTF-8', false);
+                return $matches[1].'<input type="hidden" name="_method" value="'.$escaped.'" />';
+            }
+            return $matches[1].'<input type="hidden" name="_method" value="<?php echo e('.$inner.') ?>" />';
+        }, $value);
+    }
+
+    /**
+     * Translate @push.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_push($value)
+    {
+        return preg_replace(static::matcher('push'), '$1<?php \System\Section::push$2 ?>', $value);
+    }
+
+    /**
+     * Translate @endpush.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_endpush($value)
+    {
+        return preg_replace('/(?<!@)@endpush\b/', '<?php \System\Section::endpush() ?>', $value);
+    }
+
+    /**
+     * Translate @stack.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_stack($value)
+    {
+        return preg_replace(static::matcher('stack'), '$1<?php echo \System\Section::stack$2 ?>', $value);
+    }
+
+    /**
+     * Translate @hassection.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_hassection($value)
+    {
+        return preg_replace(static::matcher('hassection'), '$1<?php if (\System\Section::has$2): ?>', $value);
+    }
+
+    /**
+     * Translate @sectionmissing.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_sectionmissing($value)
+    {
+        return preg_replace(static::matcher('sectionmissing'), '$1<?php if (!\System\Section::has$2): ?>', $value);
+    }
+
+    /**
+     * Compile user extensions.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    protected static function compile_extensions($value)
+    {
+        $compilers = static::$extensions;
+
+        foreach ($compilers as $compiler) {
+            $value = $compiler($value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Return regex for common blade syntaxes.
+     *
+     * @param string $function
+     *
+     * @return string
+     */
+    public static function matcher($function)
+    {
+        return '/(\s*)@'.$function.'(\s*(\((?:[^()]++|(?3))*\)))/';
+    }
+
+    /**
+     * Get full path to compiled file.
+     *
+     * @param string $path
+     *
+     * @return string
+     */
+    public static function compiled($path)
+    {
+        if (isset(static::$compiles[$path])) {
+            return static::$compiles[$path];
+        }
+
+        $name = Str::replace_last('.blade.php', '', basename($path));
+        $key = defined('RAKIT_KEY') ? RAKIT_KEY : '00000000-0000-0000-0000-000000000000';
+        $hash = substr(hash_hmac('sha256', $path, $key), 0, 16);
+
+        static::$compiles[$path] = path('storage').'views'.DS.sprintf('%s__%s', $name, $hash).'.bc.php';
+
+        return static::$compiles[$path];
+    }
+}

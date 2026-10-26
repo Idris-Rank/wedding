@@ -1,0 +1,54 @@
+# Dependencies
+/vendor/
+
+# Application secrets and local environment files
+/key.php
+/.env
+/.env.*
+!.env.example
+
+# Runtime storage (directory-level .gitignore files are also kept)
+/storage/cache/*
+/storage/console/*
+/storage/database/*
+/storage/debugbar/*
+/storage/jobs/*
+/storage/logs/*
+/storage/sessions/*
+/storage/views/*
+!/storage/cache/.gitignore
+!/storage/console/.gitignore
+!/storage/database/.gitignore
+!/storage/debugbar/.gitignore
+!/storage/jobs/.gitignore
+!/storage/logs/.gitignore
+!/storage/sessions/.gitignore
+!/storage/views/.gitignore
+
+# Local development and IDE files
+/.kilo/agent-manager.json
+/.idea/
+/.vscode/
+/.fleet/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local test and coverage output
+/coverage/
+/.phpunit.result.cache
+
+# Local documentation/build output
+/build/
+/docs/_build/
+
+# Local Laragon/runtime files
+/php_errors.log
+/error_log
+*.log

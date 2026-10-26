@@ -1,0 +1,265 @@
+<?php
+
+namespace System\Foundation\Http;
+
+defined('DS') or exit('No direct access.');
+
+class Parameter implements \IteratorAggregate, \Countable
+{
+    /**
+     * Contains all parameters.
+     *
+     * @var array
+     */
+    protected $parameters;
+
+    /**
+     * Constructor.
+     *
+     * @param array $parameters
+     */
+    public function __construct(array $parameters = [])
+    {
+        $this->parameters = $parameters;
+    }
+
+    /**
+     * Get all parameters.
+     *
+     * @return array
+     */
+    public function all()
+    {
+        return $this->parameters;
+    }
+
+    /**
+     * Get all parameter keys.
+     *
+     * @return array
+     */
+    public function keys()
+    {
+        return array_keys($this->parameters);
+    }
+
+    /**
+     * Replace all parameters.
+     *
+     * @param array
+     */
+    public function replace(array $parameters = [])
+    {
+        $this->parameters = $parameters;
+    }
+
+    /**
+     * Add array of parameters.
+     *
+     * @param array $parameters
+     */
+    public function add(array $parameters = [])
+    {
+        $this->parameters = array_replace($this->parameters, $parameters);
+    }
+
+    /**
+     * Get a parameter by name.
+     *
+     * @param string $path
+     * @param mixed  $default
+     * @param bool   $deep
+     *
+     * @return mixed
+     */
+    public function get($path, $default = null, $deep = false)
+    {
+        $path = (string) $path;
+
+        if (! $deep || false === ($pos = strpos($path, '['))) {
+            return array_key_exists($path, $this->parameters) ? $this->parameters[$path] : $default;
+        }
+
+        $root = substr($path, 0, $pos);
+
+        if (! array_key_exists($root, $this->parameters)) {
+            return $default;
+        }
+
+        $value = $this->parameters[$root];
+        $currentKey = null;
+
+        for ($i = $pos, $count = mb_strlen($path, '8bit'); $i < $count; ++$i) {
+            $char = $path[$i];
+
+            if ('[' === $char) {
+                if (null !== $currentKey) {
+                    throw new \Exception(sprintf("Malformed path. Unexpected '[' at position %s", $i));
+                }
+
+                $currentKey = '';
+            } elseif (']' === $char) {
+                if (null === $currentKey) {
+                    throw new \Exception(sprintf("Malformed path. Unexpected ']' at position %s", $i));
+                }
+
+                if (! is_array($value) || ! array_key_exists($currentKey, $value)) {
+                    return $default;
+                }
+
+                $value = $value[$currentKey];
+                $currentKey = null;
+            } else {
+                if (null === $currentKey) {
+                    throw new \Exception(sprintf("Malformed path. Unexpected '%s' at position %s", $char, $i));
+                }
+
+                $currentKey .= $char;
+            }
+        }
+
+        if (null !== $currentKey) {
+            throw new \Exception("Malformed path. Path must ended with ']'.");
+        }
+
+        return $value;
+    }
+
+    /**
+     * Set  a parameter by name.
+     *
+     * @param string $key
+     * @param mixed  $value
+     */
+    public function set($key, $value)
+    {
+        $this->parameters[$key] = $value;
+    }
+
+    /**
+     * Check if parameter exists by name.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public function has($key)
+    {
+        return array_key_exists($key, $this->parameters);
+    }
+
+    /**
+     * Remove a parameter by name.
+     *
+     * @param string $key
+     */
+    public function remove($key)
+    {
+        unset($this->parameters[$key]);
+    }
+
+    /**
+     * Get only alphabetic characters of a parameter.
+     *
+     * @param string $key
+     * @param mixed  $default
+     * @param bool   $deep
+     *
+     * @return string
+     */
+    public function getAlpha($key, $default = '', $deep = false)
+    {
+        return preg_replace('/[^[:alpha:]]/', '', (string) $this->get($key, $default, $deep));
+    }
+
+    /**
+     * Get only alphanumeric characters of a parameter.
+     *
+     * @param string $key
+     * @param mixed  $default
+     * @param bool   $deep
+     *
+     * @return string
+     */
+    public function getAlnum($key, $default = '', $deep = false)
+    {
+        return preg_replace('/[^[:alnum:]]/', '', (string) $this->get($key, $default, $deep));
+    }
+
+    /**
+     * Get only alphanumeric nummeric characters of a parameter.
+     *
+     * @param string $key
+     * @param mixed  $default
+     * @param bool   $deep
+     *
+     * @return string
+     */
+    public function getDigits($key, $default = '', $deep = false)
+    {
+        // Skip the - and + characters because these characters are allowed by the filter
+        return str_replace(['-', '+'], '', $this->filter($key, $default, $deep, FILTER_SANITIZE_NUMBER_INT));
+    }
+
+    /**
+     * Get integer value of a parameter.
+     *
+     * @param string $key
+     * @param mixed  $default
+     * @param bool   $deep
+     *
+     * @return int
+     */
+    public function getInt($key, $default = 0, $deep = false)
+    {
+        return (int) $this->get($key, $default, $deep);
+    }
+
+    /**
+     * Filter a parameter with a specific filter.
+     *
+     * @param string $key
+     * @param mixed  $default
+     * @param bool   $deep
+     * @param int    $filter
+     * @param mixed  $options
+     *
+     * @return mixed
+     */
+    public function filter($key, $default = null, $deep = false, $filter = FILTER_DEFAULT, $options = [])
+    {
+        $value = $this->get($key, $default, $deep);
+
+        if (! is_array($options) && $options) {
+            $options = ['flags' => $options];
+        }
+
+        if (is_array($value) && ! isset($options['flags'])) {
+            $options['flags'] = FILTER_REQUIRE_ARRAY;
+        }
+
+        return filter_var($value, $filter, $options);
+    }
+
+    /**
+     * ArrayIterator implementation.
+     *
+     * @return \ArrayIterator
+     */
+    #[\ReturnTypeWillChange]
+    public function getIterator()
+    {
+        return new \ArrayIterator($this->parameters);
+    }
+
+    /**
+     * Countable implementation.
+     *
+     * @return int
+     */
+    #[\ReturnTypeWillChange]
+    public function count()
+    {
+        return count($this->parameters);
+    }
+}

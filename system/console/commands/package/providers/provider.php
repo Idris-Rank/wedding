@@ -1,0 +1,208 @@
+<?php
+
+namespace System\Console\Commands\Package\Providers;
+
+defined('DS') or exit('No direct access.');
+
+use System\Storage;
+use System\Console\Color;
+
+abstract class Provider
+{
+    /**
+     * Download the given package.
+     *
+     * @param array  $package
+     * @param string $path
+     *
+     * @return void
+     */
+    abstract public function install(array $package, $path);
+
+    /**
+     * Download and extract the given package.
+     *
+     * @param string $url
+     * @param array  $package
+     * @param string $path
+     *
+     * @return void
+     */
+    protected function zipball($url, array $package, $path)
+    {
+        $zipball = path('storage').'console'.DS.'zipball.zip';
+        is_file($zipball) && Storage::delete($zipball);
+
+        if (is_dir(path('package').$package['name'])) {
+            echo PHP_EOL.Color::red(sprintf('Package already downloaded: %s', $package['name']));
+            return;
+        }
+
+        static::relax(path('package'));
+        echo PHP_EOL.Color::green('Downloading zipball...', false);
+        $this->download($url, $zipball);
+        echo ' done!';
+
+        echo PHP_EOL.Color::green('Extracting zipball...', false);
+
+        static::unzip($zipball, path('package'));
+
+        $packages = glob(path('package').$package['name'].'*', GLOB_ONLYDIR);
+
+        if (isset($packages[0]) && basename((string) $packages[0]) !== $package['name']) {
+            rename($packages[0], path('package').$package['name']);
+        }
+
+        static::relax(path('package'));
+        Storage::delete($zipball);
+
+        if (is_dir($assets = path('package').$package['name'].DS.'assets')) {
+            $destination = path('assets').'packages'.DS.$package['name'];
+
+            if (! is_dir($destination)) {
+                Storage::cpdir($assets, $destination);
+            } else {
+                echo PHP_EOL.Color::red(sprintf('Assets already exists: %s', $destination));
+                return;
+            }
+        }
+
+        echo ' done!';
+    }
+
+    /**
+     * Make the newest entry of a directory readable.
+     *
+     * @param string $directory
+     */
+    protected static function relax($directory)
+    {
+        if (! is_dir($directory)) {
+            return;
+        }
+
+        $latest = Storage::latest($directory);
+
+        if (! is_null($latest) && false !== ($path = $latest->getRealPath())) {
+            @chmod($path, 0755);
+        }
+    }
+
+    /**
+     * Download the zipball archive of the given package.
+     *
+     * @param string $url
+     * @param string $destination
+     */
+    protected function download($url, $destination)
+    {
+        is_dir($destination) && Storage::delete($destination);
+        $options = [
+            CURLOPT_HTTPGET => 1,
+            CURLOPT_SSL_VERIFYPEER => 1,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_AUTOREFERER => 1,
+            CURLOPT_RETURNTRANSFER => 1,
+            CURLOPT_FOLLOWLOCATION => 1,
+            CURLOPT_VERBOSE => get_cli_option('verbose') ? 1 : 0,
+            CURLOPT_USERAGENT => sprintf(
+                'Mozilla/5.0 (Linux x86_64; rv:%s.0) Gecko/20100101 Firefox/%s.0',
+                mt_rand(90, 110),
+                mt_rand(90, 110)
+            ),
+        ];
+
+        $ch = curl_init();
+        curl_setopt_array($ch, $options);
+        curl_setopt_array($ch, [CURLOPT_URL => $url, CURLOPT_HEADER => 1, CURLOPT_NOBODY => 1]);
+
+        /** @disregard */
+        $unused = curl_exec($ch);
+        $type = curl_getinfo($ch);
+
+        if (PHP_VERSION_ID < 80000) {
+            /** @disregard */
+            curl_close($ch);
+        }
+
+        $type = (is_array($type) && isset($type['content_type'])) ? $type['content_type'] : '';
+
+        if (! is_string($type) || false === strpos($type, 'application/zip')) {
+            echo PHP_EOL.Color::red(sprintf(
+                "Error: Remote sever sending an invalid content type: '%s (%s)', expecting '%s'",
+                $type,
+                gettype($type),
+                'application/zip'
+            ));
+            return;
+        }
+
+        try {
+            $fopen = fopen($destination, 'w+');
+            $ch = curl_init();
+            curl_setopt_array($ch, $options);
+            curl_setopt_array($ch, [CURLOPT_URL => $url, CURLOPT_FILE => $fopen, 19914 => 1]);
+
+            if (false === curl_exec($ch)) {
+                echo PHP_EOL.Color::red('Error: '.curl_error($ch));
+                return;
+            }
+
+            if (PHP_VERSION_ID < 80000) {
+                /** @disregard */
+                curl_close($ch);
+            }
+
+            fclose($fopen);
+        } catch (\Throwable $e) {
+            echo PHP_EOL.Color::red('Error: '.$e->getMessage());
+            return;
+        } catch (\Exception $e) {
+            echo PHP_EOL.Color::red('Error: '.$e->getMessage());
+            return;
+        }
+    }
+
+    /**
+     * Unzip the given package archive.
+     *
+     * @param string $file
+     * @param string $destination
+     *
+     * @return bool
+     */
+    public static function unzip($file, $destination)
+    {
+        @ini_set('memory_limit', '256M');
+
+        if (! is_dir($destination)) {
+            Storage::mkdir($destination, 0755);
+        }
+
+        if (! extension_loaded('zip') || ! class_exists('\ZipArchive')) {
+            echo PHP_EOL.Color::red('Please enable php-zip extension on this server');
+            return;
+        }
+
+        $zip = new \ZipArchive();
+
+        if (! $zip->open($file)) {
+            echo PHP_EOL.Color::red(sprintf('Error: Could not open zip file: %s', $file));
+            return;
+        }
+
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entry = str_replace('\\', '/', (string) $zip->getNameIndex($i));
+
+            if (0 === strpos($entry, '/') || preg_match('#(^|/)\.\.(/|$)#', $entry)) {
+                $zip->close();
+                echo PHP_EOL.Color::red(sprintf('Error: Refusing unsafe path in archive: %s', $entry));
+                return;
+            }
+        }
+
+        $zip->extractTo($destination);
+        $zip->close();
+        return true;
+    }
+}

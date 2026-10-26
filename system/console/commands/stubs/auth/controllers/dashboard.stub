@@ -1,0 +1,29 @@
+<?php
+
+defined('DS') or exit('No direct access.');
+
+class Dashboard_Controller extends Controller
+{
+    /**
+     * Enable RESTful routing.
+     */
+    public $restful = true;
+
+    /**
+     * Constructor.
+     */
+    public function __construct()
+    {
+        $this->middleware('before', 'csrf|throttle:60,1|auth');
+    }
+
+    /**
+     * Display the dashboard page.
+     *
+     * @return View
+     */
+    public function get_index()
+    {
+        return view('dashboard');
+    }
+}

@@ -1,0 +1,84 @@
+<?php
+
+defined('DS') or exit('No direct access.');
+
+return [
+    /*
+    |--------------------------------------------------------------------------
+    | Aliases
+    |--------------------------------------------------------------------------
+    |
+    | Here, you can define any class aliases you want to register when the
+    | framework is loaded. Aliases are loaded using lazy-loading technique,
+    | so feel free to add as many as you want!
+    |
+    | Alias makes it more convenient to use classes with namespaces.
+    | Instead of referring to classes using their full namespaces, you can use
+    | the aliases defined here.
+    |
+    */
+
+    'Arr' => 'System\Arr',
+    'Auth' => 'System\Auth',
+    'Authenticator' => 'System\Auth\Drivers\Driver',
+    'Autoloader' => 'System\Autoloader',
+    'Blade' => 'System\Blade',
+    'Broadcast' => 'System\Broadcast',
+    'Cache' => 'System\Cache',
+    'Carbon' => 'System\Carbon',
+    'Command' => 'System\Console\Commands\Command',
+    'Collection' => 'System\Collection',
+    'Component' => 'System\Blade\Component',
+    'Concurrency' => 'System\Concurrency',
+    'Config' => 'System\Config',
+    'Console' => 'System\Console\Console',
+    'Container' => 'System\Container',
+    'Controller' => 'System\Routing\Controller',
+    'Cookie' => 'System\Cookie',
+    'Crypter' => 'System\Crypter',
+    'Curl' => 'System\Curl',
+    'DB' => 'System\Database',
+    'Email' => 'System\Email',
+    'Facile' => 'System\Database\Facile\Model',
+    'Faker' => 'System\Foundation\Faker\Factory',
+    'Gate' => 'System\Gate',
+    'Hash' => 'System\Hash',
+    'Hook' => 'System\Hook',
+    'Image' => 'System\Image',
+    'Input' => 'System\Input',
+    'Job' => 'System\Job',
+    'Jobable' => 'System\Job\Jobable',
+    'JWT' => 'System\JWT',
+    'Lang' => 'System\Lang',
+    'Log' => 'System\Log',
+    'Lottery' => 'System\Lottery',
+    'Mailable' => 'System\Email\Mailable',
+    'Mailer' => 'System\Email\Drivers\Driver',
+    'Markdown' => 'System\Markdown',
+    'Middleware' => 'System\Routing\Middleware',
+    'Notification' => 'System\Notification',
+    'Package' => 'System\Package',
+    'Paginator' => 'System\Paginator',
+    'Pending' => 'System\Job\Pending',
+    'Process' => 'System\Process',
+    'Redirect' => 'System\Redirect',
+    'Request' => 'System\Request',
+    'Response' => 'System\Response',
+    'Route' => 'System\Routing\Route',
+    'Router' => 'System\Routing\Router',
+    'RSA' => 'System\RSA',
+    'Schema' => 'System\Database\Schema',
+    'Schedule' => 'System\Schedule',
+    'Section' => 'System\Section',
+    'Session' => 'System\Session',
+    'Storage' => 'System\Storage',
+    'Str' => 'System\Str',
+    'Throttle' => 'System\Routing\Throttle',
+    'Transformer' => 'System\Transformer',
+    'URI' => 'System\URI',
+    'URL' => 'System\URL',
+    'Validator' => 'System\Validator',
+    'View' => 'System\View',
+
+    // ..
+];

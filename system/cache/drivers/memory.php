@@ -1,0 +1,120 @@
+<?php
+
+namespace System\Cache\Drivers;
+
+defined('DS') or exit('No direct access.');
+
+class Memory extends Sectionable
+{
+    /**
+     * Contains the cached items.
+     *
+     * @var array
+     */
+    public $storage = [];
+
+    /**
+     * Check if an item exists in the cache.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public function has($key)
+    {
+        return ! is_null($this->get($key));
+    }
+
+    /**
+     * Retrieve an item from the cache driver.
+     *
+     * @param string $key
+     *
+     * @return mixed
+     */
+    protected function retrieve($key)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+            return $this->get_from_section($section, $key);
+        }
+
+        return isset($this->storage[$key]) ? $this->storage[$key] : null;
+    }
+
+    /**
+     * Store an item in the cache for a given number of minutes.
+     *
+     * @param string $key
+     * @param mixed  $value
+     * @param int    $minutes
+     */
+    public function put($key, $value, $minutes)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+            return $this->put_in_section($section, $key, $value, $minutes);
+        }
+
+        $this->storage[$key] = $value;
+    }
+
+    /**
+     * Remove an item from the cache.
+     *
+     * @param string $key
+     */
+    public function forget($key)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+
+            if ('*' === $key) {
+                $this->forget_section($section);
+            } else {
+                $this->forget_in_section($section, $key);
+            }
+        } else {
+            unset($this->storage[$key]);
+        }
+    }
+
+    /**
+     * Remove all items from the cache.
+     */
+    public function flush()
+    {
+        $this->storage = [];
+    }
+
+    /**
+     * Remove an item from a section.
+     *
+     * @param string $section
+     *
+     * @return int|bool
+     */
+    public function forget_section($section)
+    {
+        $prefix = 'section#'.$section.'.';
+
+        foreach (array_keys($this->storage) as $key) {
+            if (0 === strpos($key, $prefix)) {
+                unset($this->storage[$key]);
+            }
+        }
+    }
+
+    /**
+     * Get the key for an item in a section.
+     *
+     * @param string $section
+     * @param string $key
+     *
+     * @return string
+     */
+    protected function section_item_key($section, $key)
+    {
+        return 'section#'.$section.'.'.$key;
+    }
+}

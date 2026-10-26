@@ -1,0 +1,392 @@
+<?php
+
+namespace System\Console\Fiddle;
+
+defined('DS') or exit('No direct access.');
+
+class Parser
+{
+    /**
+     * The initials to use for parsing.
+     *
+     * @var string
+     */
+    private $initials;
+
+    /**
+     * The pairs of delimiters to use for parsing.
+     *
+     * @var array
+     */
+    private $pairs = [
+        '(' => ')', '{' => '}', '[' => ']',
+        '"' => '"', "'" => "'",
+        '//' => "\n", '#' => "\n", '/*' => '*/',
+        '<<<' => '_heredoc_special_case_',
+    ];
+
+    /**
+     * Create a new Parser instance.
+     */
+    public function __construct()
+    {
+        $this->initials = '/^('.implode(
+            '|',
+            array_map([$this, 'quote'], array_keys($this->pairs))
+        ).')/';
+    }
+
+    /**
+     * Break the buffer into one chunk per top-level construct, or nothing if incomplete.
+     *
+     * @param string $buffer
+     *
+     * @return array
+     */
+    public function statements($buffer)
+    {
+        $result = $this->create_result($buffer);
+
+        while (strlen($result->buffer) > 0) {
+            $this->reset_result($result);
+
+            if ($result->state === '<<<') {
+                if (! $this->heredoc_start($result)) {
+                    continue;
+                }
+            }
+
+            $rules = [
+                'scan_use',
+                'scan_esc_char',
+                'scan_region',
+                'scan_state_entrant',
+                'scan_wsp',
+                'scan_char',
+            ];
+
+            foreach ($rules as $method) {
+                if ($this->{$method}($result)) {
+                    break;
+                }
+            }
+
+            if ($result->stop) {
+                break;
+            }
+        }
+
+        if (
+            ! empty($result->statements)
+            && trim($result->stmt) === ''
+            && strlen($result->buffer) === 0
+        ) {
+            $this->combine_statements($result);
+            $this->debug($result);
+
+            return $result->statements;
+        }
+    }
+
+    /**
+     * Quote a token for use in a regular expression.
+     *
+     * @param string $token
+     *
+     * @return string
+     */
+    public function quote($token)
+    {
+        return preg_quote($token, '/');
+    }
+
+    /**
+     * Create a result object for parsing.
+     *
+     * @param string $buffer
+     *
+     * @return \stdClass
+     */
+    private function create_result($buffer)
+    {
+        $result = new \stdClass();
+        $result->buffer = $buffer;
+        $result->stmt = '';
+        $result->state = null;
+        $result->states = [];
+        $result->statements = [];
+        $result->stop = false;
+        return $result;
+    }
+
+    /**
+     * Reset the result object for the next iteration.
+     *
+     * @param \stdClass $result
+     *
+     * @return void
+     */
+    private function reset_result($result)
+    {
+        $result->stop = false;
+        $result->state = end($result->states);
+        $result->terminator = $result->state
+            ? '/^(.*?'.preg_quote($this->pairs[$result->state], '/').')/s'
+            : null;
+    }
+
+    /**
+     * Combine related statements.
+     *
+     * @param \stdClass $result
+     *
+     * @return void
+     */
+    private function combine_statements($result)
+    {
+        $combined = [];
+
+        foreach ($result->statements as $scope) {
+            if (trim($scope) === ';' || substr(trim($scope), -1) !== ';') {
+                $combined[] = ((string) array_pop($combined)).$scope;
+            } else {
+                $combined[] = $scope;
+            }
+        }
+
+        $result->statements = $combined;
+    }
+
+    /**
+     * Add debug information to the result.
+     *
+     * @param \stdClass $result
+     *
+     * @return void
+     */
+    private function debug($result)
+    {
+        $result->statements[] = $this->prepare_debug(array_pop($result->statements));
+    }
+
+    /**
+     * Handle heredoc start.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function heredoc_start($result)
+    {
+        if (preg_match('/^([\'"]?)([a-z_][a-z0-9_]*)\\1/i', $result->buffer, $match)) {
+            $doc_id = $match[2];
+            $result->stmt .= $match[0];
+            $result->buffer = substr($result->buffer, strlen($match[0]));
+            $result->terminator = '/^(.*?\n'.$doc_id.');?\n/s';
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scan for whitespace.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function scan_wsp($result)
+    {
+        if (preg_match('/^\s+/', $result->buffer, $match)) {
+            if (! empty($result->statements) && $result->stmt === '') {
+                $result->statements[] = array_pop($result->statements).$match[0];
+            } else {
+                $result->stmt .= $match[0];
+            }
+
+            $result->buffer = substr($result->buffer, strlen($match[0]));
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scan for escaped characters.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function scan_esc_char($result)
+    {
+        if (
+            ($result->state === '"' || $result->state === "'")
+            && preg_match('/^[^'.$result->state.']*?\\\\./s', $result->buffer, $match)
+        ) {
+            $result->stmt .= $match[0];
+            $result->buffer = substr($result->buffer, strlen($match[0]));
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scan for regions.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function scan_region($result)
+    {
+        if (in_array($result->state, ['"', "'", '<<<', '//', '#', '/*'])) {
+            if (preg_match($result->terminator, $result->buffer, $match)) {
+                $result->stmt .= $match[1];
+                $result->buffer = substr($result->buffer, strlen($match[1]));
+                array_pop($result->states);
+            } else {
+                $result->stop = true;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scan for state entrants.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function scan_state_entrant($result)
+    {
+        if (preg_match($this->initials, $result->buffer, $match)) {
+            $result->stmt .= $match[0];
+            $result->buffer = substr($result->buffer, strlen($match[0]));
+            $result->states[] = $match[0];
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scan a single character.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function scan_char($result)
+    {
+        $chr = substr($result->buffer, 0, 1);
+        $result->stmt .= $chr;
+        $result->buffer = substr($result->buffer, 1);
+
+        if ($result->state && $chr === $this->pairs[$result->state]) {
+            array_pop($result->states);
+        }
+
+        if (empty($result->states) && ($chr === ';' || $chr === '}')) {
+            if (! $this->is_lambda($result->stmt) || $chr === ';') {
+                $result->statements[] = $result->stmt;
+                $result->stmt = '';
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Scan for use statements.
+     *
+     * @param \stdClass $result
+     *
+     * @return bool
+     */
+    private function scan_use($result)
+    {
+        if (! empty($result->states) || '' !== trim($result->stmt)) {
+            return false;
+        }
+
+        $pattern = '/^use\s+(\\\\?[A-Za-z_][A-Za-z0-9_]*'
+            .'(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*'
+            .'(?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?)\s*;/';
+
+        if (preg_match($pattern, $result->buffer, $use)) {
+            $result->buffer = substr($result->buffer, strlen($use[0]));
+
+            if (strpos($use[0], ' as ') !== false) {
+                list($class, $alias) = explode(' as ', $use[1]);
+            } else {
+                $class = $use[1];
+                $alias = substr($use[1], strrpos($use[1], '\\') + 1);
+            }
+
+            $result->statements[] = sprintf("class_alias('%s', '%s');", $class, $alias);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if the input is a lambda function.
+     *
+     * @param string $input
+     *
+     * @return bool
+     */
+    private function is_lambda($input)
+    {
+        $pattern = '/^([^=]*?=\s*)?function\s*\([^\)]*\)\s*(use\s*\([^\)]*\)\s*)?\s*\{.*\}\s*;?$/is';
+        return preg_match($pattern, trim($input));
+    }
+
+    /**
+     * Check if the input is returnable.
+     *
+     * @param string $input
+     *
+     * @return bool
+     */
+    private function is_returnable($input)
+    {
+        $input = trim($input);
+
+        if (substr($input, -1) === ';' && substr($input, 0, 1) != '{') {
+            $returnables = [
+                'echo', 'print', 'exit', 'quit', 'die', 'goto', 'global', 'include', 'include_once', 'require',
+                'require_once', 'list', 'return', 'do', 'for', 'foreach', 'while', 'if', 'function', 'namespace',
+                'class', 'interface', 'abstract', 'switch', 'declare', 'throw', 'try', 'unset', 'class_alias',
+            ];
+
+            return $this->is_lambda($input) || ! preg_match('/^('.implode('|', $returnables).')\b/i', $input);
+        }
+
+        return false;
+    }
+
+    /**
+     * Prepare input for debugging.
+     *
+     * @param string $input
+     *
+     * @return string
+     */
+    private function prepare_debug($input)
+    {
+        if ($this->is_returnable($input) && ! preg_match('/^\s*return/i', $input)) {
+            $input = sprintf('return %s', $input);
+        }
+
+        return $input;
+    }
+}

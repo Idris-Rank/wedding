@@ -1,0 +1,134 @@
+<?php
+
+namespace System\Foundation\Http;
+
+defined('DS') or exit('No direct access.');
+
+class File extends Parameter
+{
+    /**
+     * The list of file keys.
+     *
+     * @var array
+     */
+    private static $fileKeys = ['error', 'name', 'size', 'tmp_name', 'type'];
+
+    /**
+     * Constructor.
+     *
+     * @param array $parameters
+     */
+    public function __construct(array $parameters = [])
+    {
+        $this->replace($parameters);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function replace(array $files = [])
+    {
+        $this->parameters = [];
+        $this->add($files);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function set($key, $value)
+    {
+        if (! is_array($value) && ! ($value instanceof Upload)) {
+            throw new \InvalidArgumentException(
+                'An uploaded file must be an array or an instance of \System\Foundation\Http\Upload class.'
+            );
+        }
+
+        parent::set($key, $this->convertFileInformation($value));
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function add(array $files = [])
+    {
+        foreach ($files as $key => $file) {
+            $this->set($key, $file);
+        }
+    }
+
+    /**
+     * Convert file infprmation to Upload instance.
+     *
+     * @param array|Upload $file
+     *
+     * @return Upload
+     */
+    protected function convertFileInformation($file)
+    {
+        if ($file instanceof Upload) {
+            return $file;
+        }
+
+        $file = $this->fixPhpFilesArray($file);
+
+        if (is_array($file)) {
+            $keys = array_keys($file);
+            sort($keys);
+            $file = ($keys === self::$fileKeys)
+                ? ((UPLOAD_ERR_NO_FILE !== $file['error'])
+                    ? new Upload($file['tmp_name'], $file['name'], $file['type'], $file['size'], $file['error'])
+                    : null
+                )
+                : array_map([$this, 'convertFileInformation'], $file);
+        }
+
+        return $file;
+    }
+
+    /**
+     * Fix the $_FILES array bug.
+     *
+     * PHP shapes $_FILES differently for a plain field name than for one that looks
+     * like an array ("normal" vs. "foo[bar]").
+     *
+     * @param array $data
+     *
+     * @return array
+     */
+    protected function fixPhpFilesArray($data)
+    {
+        if (! is_array($data)) {
+            return $data;
+        }
+
+        // PHP 8.1+ adds a 'full_path' key to $_FILES.
+        unset($data['full_path']);
+
+        $keys = array_keys($data);
+        sort($keys);
+
+        if (self::$fileKeys !== $keys || ! isset($data['name']) || ! is_array($data['name'])) {
+            return $data;
+        }
+
+        $files = $data;
+
+        foreach (self::$fileKeys as $k) {
+            unset($files[$k]);
+        }
+
+        $keys = array_keys($data['name']);
+
+        foreach ($keys as $key) {
+            $files[$key] = $this->fixPhpFilesArray([
+                'error' => $data['error'][$key],
+                'name' => $data['name'][$key],
+                'type' => $data['type'][$key],
+                'tmp_name' => $data['tmp_name'][$key],
+                'size' => $data['size'][$key],
+            ]);
+        }
+
+        return $files;
+    }
+}

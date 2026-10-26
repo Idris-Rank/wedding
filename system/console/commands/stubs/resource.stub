@@ -1,0 +1,67 @@
+<?php
+
+defined('DS') or exit('No direct access.');
+
+class stub_class_Controller extends Controller
+{
+    /**
+     * Enable RESTful routing.
+     */
+    public $restful = true;
+
+    /**
+     * Handle GET /stub_uri
+     */
+    public function get_index()
+    {
+        // ..
+    }
+
+    /**
+     * Handle GET /stub_uri/create
+     */
+    public function get_create()
+    {
+        // ..
+    }
+
+    /**
+     * Handle POST /stub_uri
+     */
+    public function post_store()
+    {
+        // ..
+    }
+
+    /**
+     * Handle GET /stub_uri/(:id)/show
+     */
+    public function get_show($id)
+    {
+        // ..
+    }
+
+    /**
+     * Handle GET /stub_uri/(:id)/edit
+     */
+    public function get_edit($id)
+    {
+        // ..
+    }
+
+    /**
+     * Handle PUT /stub_uri/(:id)/update
+     */
+    public function put_update($id)
+    {
+        // ..
+    }
+
+    /**
+     * Handle DELETE /stub_uri/(:id)/delete
+     */
+    public function delete_destroy($id)
+    {
+        // ..
+    }
+}

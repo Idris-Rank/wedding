@@ -1,0 +1,245 @@
+<?php
+
+namespace System\Cache\Drivers;
+
+defined('DS') or exit('No direct access.');
+
+use System\Str;
+
+class Memcached extends Sectionable
+{
+    /**
+     * Contains the Memcached instance.
+     *
+     * @var \Memcached
+     */
+    public $memcached;
+
+    /**
+     * The cache key prefix from the configuration file.
+     *
+     * @var string
+     */
+    protected $key;
+
+    /**
+     * Make a new Memcached cache driver instance.
+     *
+     * @param \Memcached $memcached
+     * @param string     $key
+     */
+    public function __construct(\Memcached $memcached, $key)
+    {
+        $this->key = $key;
+        $this->memcached = $memcached;
+    }
+
+    /**
+     * Check if an item exists in the cache.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public function has($key)
+    {
+        return ! is_null($this->get($key));
+    }
+
+    /**
+     * Retrieve an item from the cache driver.
+     *
+     * @param string $key
+     *
+     * @return mixed
+     */
+    protected function retrieve($key)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+            return $this->get_from_section($section, $key);
+        }
+
+        /** @disregard */
+        $cache = $this->memcached->get($this->key.$key);
+
+        if (false === $cache && defined('Memcached::RES_NOTFOUND')) {
+            /** @disregard */
+            return (\Memcached::RES_NOTFOUND === $this->memcached->getResultCode()) ? null : $cache;
+        }
+
+        if (false !== $cache) {
+            return $cache;
+        }
+    }
+
+    /**
+     * Store an item in the cache for a given number of minutes.
+     *
+     * @param string $key
+     * @param mixed  $value
+     * @param int    $minutes
+     */
+    public function put($key, $value, $minutes)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+            return $this->put_in_section($section, $key, $value, $minutes);
+        }
+
+        /** @disregard */
+        $this->memcached->set($this->key.$key, $value, $this->expiration($minutes));
+    }
+
+    /**
+     * Convert minutes to a Memcached expiration value.
+     * Memcached treats values above 30 days as an absolute unix timestamp.
+     *
+     * @param int $minutes
+     *
+     * @return int
+     */
+    protected function expiration($minutes)
+    {
+        $seconds = (int) $minutes * 60;
+
+        if ($minutes >= 2628000) {
+            return 0; // forever()
+        }
+
+        return ($seconds > 2592000) ? time() + $seconds : $seconds;
+    }
+
+    /**
+     * Remove an item from the cache.
+     *
+     * @param string $key
+     */
+    public function forget($key)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+
+            if ('*' === $key) {
+                $this->forget_section($section);
+            } else {
+                $this->forget_in_section($section, $key);
+            }
+        } else {
+            /** @disregard */
+            $this->memcached->delete($this->key.$key);
+        }
+    }
+
+    /**
+     * Remove all items from the cache.
+     */
+    public function flush()
+    {
+        /** @disregard */
+        return $this->memcached->flush();
+    }
+
+    /**
+     * Increment a numeric value in the cache (atomic).
+     *
+     * @param string $key
+     * @param int    $minutes
+     * @param int    $by
+     *
+     * @return int
+     */
+    public function increment($key, $minutes = 1, $by = 1)
+    {
+        if ($this->sectionable($key)) {
+            list($section, $key) = $this->parse($key);
+            $key = $this->section_item_key($section, $key);
+        }
+
+        $prefixed = $this->key.$key;
+        $by = (int) $by;
+
+        /** @disregard */
+        if ($this->memcached->add($prefixed, max(0, $by), $this->expiration($minutes))) {
+            return max(0, $by);
+        }
+
+        /** @disregard */
+        $current = ($by < 0)
+            ? $this->memcached->decrement($prefixed, -1 * $by)
+            : $this->memcached->increment($prefixed, $by);
+
+        return ($current !== false) ? (int) $current : max(0, $by);
+    }
+
+    /**
+     * Store a value only when the key is not there yet, with memcached add().
+     *
+     * @param string $key
+     * @param mixed  $value
+     * @param int    $seconds
+     *
+     * @return bool
+     */
+    protected function add_seconds($key, $value, $seconds)
+    {
+        if ($this->sectionable($key)) {
+            return parent::add_seconds($key, $value, $seconds);
+        }
+
+        /** @disregard */
+        return $this->memcached->add($this->key.$key, $value, max(1, (int) $seconds));
+    }
+
+    /**
+     * Remove an entire section from the cache.
+     *
+     * @param string $section
+     *
+     * @return int|bool
+     */
+    public function forget_section($section)
+    {
+        /** @disregard */
+        return $this->memcached->increment($this->key.$this->section_key($section));
+    }
+
+    /**
+     * Get the section ID for a given section.
+     *
+     * @param string $section
+     *
+     * @return int
+     */
+    protected function section_id($section)
+    {
+        return $this->sear($this->section_key($section), function () {
+            return Str::integers(1, 10000);
+        });
+    }
+
+    /**
+     * Get the section key for a given section.
+     *
+     * @param string $section
+     *
+     * @return string
+     */
+    protected function section_key($section)
+    {
+        return $section.'_section_key';
+    }
+
+    /**
+     * Get the section item key for a given section and key.
+     *
+     * @param string $section
+     * @param string $key
+     *
+     * @return string
+     */
+    protected function section_item_key($section, $key)
+    {
+        return $section.'#'.$this->section_id($section).'#'.$key;
+    }
+}

@@ -1,0 +1,378 @@
+<?php
+
+namespace System\Email\Drivers;
+
+defined('DS') or exit('No direct access.');
+
+use System\Arr;
+use System\Request;
+
+class Smtp extends Driver
+{
+    /**
+     * Contains the SMTP connection resource.
+     *
+     * @var resource|null
+     */
+    protected $connection;
+
+    /**
+     * Determine if the connection should be kept alive for multiple emails.
+     *
+     * @var bool
+     */
+    protected $keep_alive = false;
+
+    /**
+     * List of supported authentication methods.
+     *
+     * @var array
+     */
+    protected $methods = ['LOGIN', 'PLAIN', 'CRAM-MD5'];
+
+    /**
+     * Starts the email transmission.
+     *
+     * @return bool
+     */
+    protected function transmit()
+    {
+        try {
+            return $this->deliver();
+        } catch (\Throwable $e) {
+            if ($this->connection) {
+                $this->disconnect();
+            }
+
+            throw new \Exception('Failed sending email through smtp: '.$e->getMessage());
+        } catch (\Exception $e) {
+            if ($this->connection) {
+                $this->disconnect();
+            }
+
+            throw new \Exception('Failed sending email through smtp: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Do the actual delivery of the email.
+     *
+     * @return bool
+     */
+    protected function deliver()
+    {
+        $message = $this->build(true);
+
+        if (empty($this->config['smtp']['host']) || empty($this->config['smtp']['port'])) {
+            throw new \Exception('Must supply a SMTP host and port, none given.');
+        }
+
+        $this->keep_alive = Arr::get($this->config, 'smtp.keep_alive', false);
+        $authenticate = (
+            empty($this->connection)
+            && ! empty($this->config['smtp']['username'])
+            && ! empty($this->config['smtp']['password'])
+        );
+
+        $this->connect();
+
+        if ($authenticate) {
+            $this->authenticate();
+        }
+
+        $retpath = empty($this->config['return_path']) ? $this->config['from']['email'] : $this->config['return_path'];
+        $retpath = static::sanitize_header($retpath);
+        $this->command('MAIL FROM: <'.$retpath.'>', 250);
+
+        $lists = ['to', 'cc', 'bcc'];
+
+        foreach ($lists as $list) {
+            if (! is_array($this->{$list})) {
+                throw new \Exception('Invalid recipient list for '.$list.': must be an array.');
+            }
+            foreach ($this->{$list} as $recipient) {
+                $this->command('RCPT TO: <'.static::sanitize_header($recipient['email']).'>', [250, 251]);
+            }
+        }
+
+        $this->command('DATA', 354);
+
+        $lines = explode($this->config['newline'], $message['header'].$message['body']);
+
+        foreach ($lines as $line) {
+            $line = (('.' === substr((string) $line, 0, 1)) ? '.' : '').$line;
+            if (! fputs($this->connection, $line.$this->config['newline'])) {
+                throw new \Exception('Failed to send data to SMTP server.');
+            }
+        }
+
+        $this->command('.', 250);
+
+        if (! $this->keep_alive) {
+            $this->disconnect();
+        }
+
+        return true;
+    }
+
+    /**
+     * Connect to the SMTP server.
+     *
+     * @return null
+     */
+    protected function connect()
+    {
+        if ($this->connection) {
+            return;
+        }
+
+        if (false === strpos((string) $this->config['smtp']['host'], '://')) {
+            $this->config['smtp']['host'] = 'tcp://'.$this->config['smtp']['host'];
+        }
+
+        $context = stream_context_create();
+
+        $options = Arr::get($this->config, 'smtp.options');
+
+        if (is_array($options) && ! empty($options)) {
+            stream_context_set_option($context, $options);
+        }
+
+        $retry_count = max(1, (int) Arr::get($this->config, 'smtp.retry', 3));
+        $retry_delay = Arr::get($this->config, 'smtp.retry_delay', 1); // seconds
+        $errno = 0;
+        $errstr = '';
+
+        for ($attempt = 0; $attempt < $retry_count; $attempt++) {
+            $this->connection = stream_socket_client(
+                $this->config['smtp']['host'].':'.$this->config['smtp']['port'],
+                $errno,
+                $errstr,
+                $this->config['smtp']['timeout'],
+                STREAM_CLIENT_CONNECT,
+                $context
+            );
+
+            if ($this->connection) {
+                break;
+            }
+
+            if ($attempt < $retry_count - 1) {
+                sleep($retry_delay);
+            }
+        }
+
+        if (empty($this->connection)) {
+            throw new \Exception(
+                sprintf('Could not connect to SMTP after %d attempts: (%s) %s.', $retry_count, $errno, $errstr)
+            );
+        }
+
+        $this->response();
+
+        try {
+            $this->command('EHLO '.Request::server('SERVER_NAME', 'localhost.local'), 250);
+        } catch (\Throwable $e) {
+            $this->command('HELO '.Request::server('SERVER_NAME', 'localhost.local'), 250);
+        } catch (\Exception $e) {
+            $this->command('HELO '.Request::server('SERVER_NAME', 'localhost.local'), 250);
+        }
+
+        if (
+            Arr::get($this->config, 'smtp.starttls', false)
+            && 0 === strpos((string) $this->config['smtp']['host'], 'tcp://')
+        ) {
+            try {
+                $this->command('STARTTLS', 220);
+
+                $crypto = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+
+                // See: https://www.php.net/manual/en/function.stream-socket-enable-crypto.php#119122
+                if (defined('STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT')) {
+                    $crypto |= STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
+                }
+
+                if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
+                    $crypto |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+                    $crypto |= STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+                }
+
+                if (! stream_socket_enable_crypto($this->connection, true, $crypto)) {
+                    throw new \Exception('STARTTLS failed, Crypto client can not be enabled.');
+                }
+            } catch (\Throwable $e) {
+                throw new \Exception('STARTTLS failed, invalid return code received from server.');
+            } catch (\Exception $e) {
+                throw new \Exception('STARTTLS failed, invalid return code received from server.');
+            }
+
+            try {
+                $this->command('EHLO '.Request::server('SERVER_NAME', 'localhost.local'), 250);
+            } catch (\Throwable $e) {
+                $this->command('HELO '.Request::server('SERVER_NAME', 'localhost.local'), 250);
+            } catch (\Exception $e) {
+                $this->command('HELO '.Request::server('SERVER_NAME', 'localhost.local'), 250);
+            }
+        }
+
+        try {
+            $this->command('HELP', false);
+        } catch (\Throwable $e) {
+            throw new \Exception('Unable to send help command: '.$e->getMessage());
+        } catch (\Exception $e) {
+            throw new \Exception('Unable to send help command: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Disconnect from the SMTP server.
+     *
+     * @return void
+     */
+    protected function disconnect()
+    {
+        $this->command('QUIT', false);
+
+        if (is_resource($this->connection)) {
+            fclose($this->connection);
+        }
+
+        $this->connection = null;
+    }
+
+    /**
+     * Authenticate with the SMTP server.
+     *
+     * @return void
+     */
+    protected function authenticate()
+    {
+        $method = strtoupper(Arr::get($this->config, 'smtp.method', 'LOGIN'));
+
+        if (! in_array($method, $this->methods)) {
+            throw new \Exception('Unsupported SMTP auth method: '.$method);
+        }
+
+        try {
+            switch ($method) {
+                case 'PLAIN':
+                    $auth = base64_encode("\0" . $this->config['smtp']['username'] . "\0" . $this->config['smtp']['password']);
+                    $this->command('AUTH PLAIN '.$auth, 235);
+                    break;
+
+                case 'CRAM-MD5':
+                    $response = $this->command('AUTH CRAM-MD5', 334);
+                    $challenge = base64_decode(substr(trim($response), 4));
+                    $digest = hash_hmac('md5', $challenge, $this->config['smtp']['password']);
+                    $auth_response = base64_encode($this->config['smtp']['username'].' '.$digest);
+                    $this->command($auth_response, 235);
+                    break;
+
+                case 'LOGIN':
+                default:
+                    $username = base64_encode($this->config['smtp']['username']);
+                    $password = base64_encode($this->config['smtp']['password']);
+                    $this->command('AUTH LOGIN', 334);
+                    $this->command($username, 334);
+                    $this->command($password, 235);
+                    break;
+            }
+        } catch (\Throwable $e) {
+            throw new \Exception('SMTP authentication failed using method: '.$method);
+        } catch (\Exception $e) {
+            throw new \Exception('SMTP authentication failed using method: '.$method);
+        }
+    }
+
+    /**
+     * Send a command to the SMTP server and check the response code.
+     *
+     * @param string                $command
+     * @param string|bool|int|array $expecting
+     * @param bool                  $return_number
+     *
+     * @return mixed
+     */
+    protected function command($command, $expecting, $return_number = false)
+    {
+        if (! is_array($expecting) && false !== $expecting) {
+            $expecting = [$expecting];
+        }
+
+        stream_set_timeout($this->connection, $this->config['smtp']['timeout']);
+
+        if (! fputs($this->connection, $command.$this->config['newline'])) {
+            if (false === $expecting) {
+                return false;
+            }
+
+            throw new \Exception(sprintf('Failed executing command: %s', $command));
+        }
+
+        $info = stream_get_meta_data($this->connection);
+
+        if (isset($info['timed_out']) && $info['timed_out']) {
+            throw new \Exception('SMTP connection timed out.');
+        }
+
+        $response = $this->response();
+        $number = (int) substr(trim((string) $response), 0, 3);
+
+        if (false !== $expecting && ! in_array($number, $expecting)) {
+            throw new \Exception(sprintf(
+                'Got an unexpected response from host on command: [%s] expecting: %s received: %s',
+                $command,
+                implode(' or ', $expecting),
+                $response
+            ));
+        }
+
+        return $return_number ? $number : $response;
+    }
+
+    /**
+     * Get the response from the SMTP server.
+     *
+     * @return string
+     */
+    protected function response()
+    {
+        $data = '';
+        $max = 100; // Prevent an infinite loop
+        $iterations = 0;
+
+        stream_set_timeout($this->connection, $this->config['smtp']['timeout']);
+
+        while ($str = (string) fgets($this->connection, 512)) {
+            $info = stream_get_meta_data($this->connection);
+
+            if (isset($info['timed_out']) && $info['timed_out']) {
+                throw new \Exception('SMTP connection timed out.');
+            }
+
+            $data .= $str;
+
+            if (' ' === substr($str, 3, 1)) {
+                break;
+            }
+
+            $iterations++;
+
+            if ($iterations >= $max) {
+                throw new \Exception('SMTP response loop exceeded maximum iterations.');
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Destructor to ensure the SMTP connection is closed.
+     */
+    public function __destruct()
+    {
+        if ($this->connection) {
+            $this->disconnect();
+        }
+    }
+}

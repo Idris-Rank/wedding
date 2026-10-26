@@ -1,0 +1,119 @@
+<?php
+
+namespace System\Database\Schema\Grammars;
+
+defined('DS') or exit('No direct access.');
+
+use System\Magic;
+use System\Database\Schema\Table;
+use System\Database\Grammar as BaseGrammar;
+
+abstract class Grammar extends BaseGrammar
+{
+    /**
+     * Generate the sql for a foreign key constraint.
+     *
+     * @param Table $table
+     * @param Magic $command
+     *
+     * @return string|array
+     */
+    public function foreign(Table $table, Magic $command)
+    {
+        $name = $command->name;
+        $table = $this->wrap($table);
+        $on = $this->wrap_table($command->on);
+        $foreign = $this->columnize($command->columns);
+        $references = is_array($command->references) ? $command->references : [$command->references];
+        $referenced = $this->columnize($references);
+
+        $sql = 'ALTER TABLE '.$table.' ADD CONSTRAINT '.$name.' ';
+        $sql .= 'FOREIGN KEY ('.$foreign.') REFERENCES '.$on.' ('.$referenced.')';
+        $sql .= is_null($command->on_delete) ? '' : ' ON DELETE '.$command->on_delete;
+        $sql .= is_null($command->on_update) ? '' : ' ON UPDATE '.$command->on_update;
+
+        return $sql;
+    }
+
+    /**
+     * Generate the sql for dropping a table.
+     *
+     * @param Table $table
+     * @param Magic $command
+     *
+     * @return string
+     */
+    public function drop(Table $table, Magic $command)
+    {
+        return 'DROP TABLE '.$this->wrap($table);
+    }
+
+    /**
+     * Generate the sql for dropping a constraint.
+     *
+     * @param Table $table
+     * @param Magic $command
+     *
+     * @return string
+     */
+    protected function drop_constraint(Table $table, Magic $command)
+    {
+        return 'ALTER TABLE '.$this->wrap($table).' DROP CONSTRAINT '.$command->name;
+    }
+
+    /**
+     * Wrap a table name or a column name.
+     *
+     * @param Table|string $value
+     *
+     * @return string
+     */
+    public function wrap($value)
+    {
+        if ($value instanceof Table) {
+            return $this->wrap_table($value->name);
+        }
+
+        return parent::wrap(($value instanceof Magic) ? $value->name : $value);
+    }
+
+    /**
+     * Get the columns of a table that are (or are not) marked with change().
+     *
+     * @param Table $table
+     * @param bool  $changed
+     *
+     * @return array
+     */
+    protected function changed(Table $table, $changed = true)
+    {
+        return array_values(array_filter($table->columns, function ($column) use ($changed) {
+            return $changed === (isset($column->change) && $column->change);
+        }));
+    }
+
+    /**
+     * Get the sql for a column's type.
+     *
+     * @param Magic $column
+     *
+     * @return string
+     */
+    protected function type(Magic $column)
+    {
+        return $this->{'type_'.$column->type}($column);
+    }
+
+    /**
+     * Format the default value for a column.
+     *
+     * @param mixed $value
+     *
+     * @return string
+     */
+    protected function default_value($value)
+    {
+        $value = is_bool($value) ? (int) $value : $value;
+        return str_replace("'", "''", (string) $value);
+    }
+}

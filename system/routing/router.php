@@ -1,0 +1,697 @@
+<?php
+
+namespace System\Routing;
+
+defined('DS') or exit('No direct access.');
+
+use System\Arr;
+use System\Str;
+use System\Hook;
+use System\Package;
+
+class Router
+{
+    /**
+     * Contains list of route names.
+     *
+     * @var array
+     */
+    public static $names = [];
+
+    /**
+     * Contains list of route actions.
+     *
+     * @var array
+     */
+    public static $uses = [];
+
+    /**
+     * All registered routes, grouped by HTTP method.
+     *
+     * @var array
+     */
+    public static $routes = [
+        'GET' => [],
+        'POST' => [],
+        'PUT' => [],
+        'DELETE' => [],
+        'PATCH' => [],
+        'HEAD' => [],
+        'TRACE' => [],
+        'CONNECT' => [],
+        'OPTIONS' => [],
+    ];
+
+    /**
+     * All registered fallback routes, grouped by HTTP method.
+     *
+     * @var array
+     */
+    public static $fallback = [
+        'GET' => [],
+        'POST' => [],
+        'PUT' => [],
+        'DELETE' => [],
+        'PATCH' => [],
+        'HEAD' => [],
+        'TRACE' => [],
+        'CONNECT' => [],
+        'OPTIONS' => [],
+    ];
+
+    /**
+     * Contains list of route groups.
+     */
+    public static $groups = [];
+
+    /**
+     * Contains current route group attributes.
+     */
+    public static $group;
+
+    /**
+     * Contains package name for the current route.
+     *
+     * @var string|null
+     */
+    public static $package;
+
+    /**
+     * Maximum number of segments for controller auto-discovery.
+     *
+     * @var int
+     */
+    public static $segments = 5;
+
+    /**
+     * Set once any registered route carries a 'domain' attribute.
+     *
+     * @var bool
+     */
+    public static $domains = false;
+
+    /**
+     * Cache of route pattern to its compiled regex, keyed by the raw pattern.
+     *
+     * @var array
+     */
+    protected static $compiled = [];
+
+    /**
+     * Names and actions find() and uses() looked up in vain, until a route is added.
+     *
+     * @var array
+     */
+    protected static $misses = [];
+
+    /**
+     * The regex splitting a route on its wildcards, with the tokens it was built for.
+     *
+     * @var array|null
+     */
+    protected static $splitter;
+
+    /**
+     * List of supported regex patterns.
+     *
+     * @var array
+     */
+    public static $patterns = [
+        '(:alpha)' => '([a-zA-Z]+)',
+        '(:num)' => '([0-9]+)',
+        '(:alnum)' => '([a-zA-Z0-9]+)',
+        '(:any)' => '([a-zA-Z0-9\.\-_%=]{1,255})',
+        '(:segment)' => '([^/]{1,255})',
+        '(:all)' => '(.{1,1000})',
+    ];
+
+    /**
+     * List of supported optional regex patterns.
+     *
+     * @var array
+     */
+    public static $optional = [
+        '/(:alpha?)' => '(?:/([a-zA-Z]+))?',
+        '/(:num?)' => '(?:/([0-9]+))?',
+        '/(:alnum?)' => '(?:/([a-zA-Z0-9]+))?',
+        '/(:any?)' => '(?:/([a-zA-Z0-9\.\-_%=]+))?',
+        '/(:segment?)' => '(?:/([^/]+))?',
+        '/(:all?)' => '(?:/(.*))?',
+    ];
+
+    /**
+     * List of HTTP request methods.
+     *
+     * @var array
+     */
+    public static $methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'TRACE', 'CONNECT', 'OPTIONS'];
+
+    /**
+     * Register a shared action for multiple routes.
+     *
+     * @param array $routes
+     * @param mixed $action
+     */
+    public static function share(array $routes, $action)
+    {
+        foreach ($routes as $route) {
+            static::register($route[0], $route[1], $action);
+        }
+    }
+
+    /**
+     * Register a route group with shared attributes.
+     *
+     * @param array    $attributes
+     * @param \Closure $handler
+     */
+    public static function group(array $attributes, \Closure $handler)
+    {
+        array_push(static::$groups, $attributes);
+        static::$group = static::merge_groups();
+        call_user_func($handler);
+        array_pop(static::$groups);
+        static::$group = static::merge_groups();
+    }
+
+    /**
+     * Register a new route.
+     *
+     * @param string|array $method
+     * @param string       $route
+     * @param mixed        $action
+     */
+    public static function register($method, $route, $action)
+    {
+        $route = Str::characterify($route);
+        $digits = is_string($route) && '' !== $route && ! preg_match('/[^0-9]/', $route);
+
+        $route = $digits ? '('.$route.')' : $route;
+        $route = is_string($route) ? explode(', ', $route) : $route;
+
+        if (is_array($method)) {
+            foreach ($method as $http) {
+                static::register($http, $route, $action);
+            }
+
+            return;
+        }
+
+        $route = (array) $route;
+
+        foreach ($route as $uri) {
+            if ('*' === $method) {
+                foreach (static::$methods as $verb) {
+                    static::register($verb, $uri, $action);
+                }
+
+                continue;
+            }
+
+            $uri = ltrim(str_replace('(:package)', (string) static::$package, $uri), '/');
+            $uri = ('' === $uri) ? '/' : $uri;
+
+            if (! is_null(static::$group) && isset(static::$group['prefix'])) {
+                $prefix = trim(static::$group['prefix'], '/');
+                if (! empty($prefix)) {
+                    $uri = $prefix.'/'.ltrim($uri, '/');
+                }
+            }
+
+            $uri = rtrim($uri, '/');
+            $uri = ('' === $uri) ? '/' : $uri;
+
+            if ('(' === $uri[0]) {
+                $routes = &static::$fallback;
+            } else {
+                $routes = &static::$routes;
+            }
+
+            $group_domain = (! is_null(static::$group) && isset(static::$group['domain']))
+                ? static::$group['domain']
+                : null;
+            $route_key = $group_domain ? ($group_domain.'||'.$uri) : $uri;
+            $routes[$method][$route_key] = static::grouped(is_array($action) ? $action : static::action($action));
+            static::$misses = [];
+
+            if (isset($routes[$method][$route_key]['domain'])) {
+                static::$domains = true;
+            }
+        }
+    }
+
+    /**
+     * Apply the current group to a route's action. The group's middleware runs before
+     * the route's own, never instead of it, and the group's 'as' prefixes the route's
+     * name; any other group attribute fills what the route does not set.
+     *
+     * @param array $action
+     *
+     * @return array
+     */
+    protected static function grouped(array $action)
+    {
+        if (is_null(static::$group)) {
+            return $action;
+        }
+
+        $group = static::$group;
+
+        foreach (['before', 'after'] as $event) {
+            if (isset($group[$event]) && isset($action[$event])) {
+                $action[$event] = static::join_middlewares($group[$event], $action[$event]);
+            }
+        }
+
+        if (isset($group['as'])) {
+            if (isset($action['as']) && '' !== (string) $action['as']) {
+                $action['as'] = $group['as'].$action['as'];
+            }
+
+            unset($group['as']);
+        }
+
+        return $action + $group;
+    }
+
+    /**
+     * Merge all route group attributes.
+     *
+     * @return array|null
+     */
+    protected static function merge_groups()
+    {
+        if (empty(static::$groups)) {
+            return;
+        }
+
+        $merged = [];
+
+        foreach (static::$groups as $group) {
+            foreach ($group as $key => $value) {
+                if ('prefix' === $key) {
+                    $merged[$key] = static::join_prefix(Arr::get($merged, $key, ''), $value);
+                } elseif ('before' === $key || 'after' === $key) {
+                    $merged[$key] = static::join_middlewares(Arr::get($merged, $key), $value);
+                } elseif ('as' === $key) {
+                    $merged[$key] = Arr::get($merged, $key, '').$value;
+                } else {
+                    $merged[$key] = $value;
+                }
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * Chain the prefix of a nested group behind the one it sits in.
+     *
+     * @param string $outer
+     * @param string $inner
+     *
+     * @return string
+     */
+    protected static function join_prefix($outer, $inner)
+    {
+        return trim(trim((string) $outer, '/').'/'.trim((string) $inner, '/'), '/');
+    }
+
+    /**
+     * Keep the middlewares of the outer group when a nested group adds its own.
+     *
+     * @param string|array|null $outer
+     * @param string|array      $inner
+     *
+     * @return string
+     */
+    protected static function join_middlewares($outer, $inner)
+    {
+        $middlewares = array_merge(
+            is_null($outer) ? [] : (is_array($outer) ? $outer : explode('|', $outer)),
+            is_array($inner) ? $inner : explode('|', $inner)
+        );
+
+        return implode('|', array_unique(array_filter($middlewares, 'strlen')));
+    }
+
+    /**
+     * Get the URI part of a route key: a domain group stores routes as 'domain||uri'.
+     *
+     * @param string $key
+     *
+     * @return string
+     */
+    public static function uri($key)
+    {
+        $position = strpos((string) $key, '||');
+
+        return (false === $position) ? $key : substr((string) $key, $position + 2);
+    }
+
+    /**
+     * Generate action array from array, string, or Closure.
+     *
+     * @param mixed $action
+     *
+     * @return array
+     */
+    protected static function action($action)
+    {
+        return is_string($action)
+            ? ['uses' => $action]
+            : (($action instanceof \Closure) ? [$action] : (array) $action);
+    }
+
+    /**
+     * Register controller routes automatically based on package controllers.
+     *
+     * @param string|array $controllers
+     * @param string|array $defaults
+     */
+    public static function controller($controllers, $defaults = 'index')
+    {
+        $controllers = (array) $controllers;
+
+        foreach ($controllers as $identifier) {
+            list($package, $controller) = Package::parse($identifier);
+
+            $root = Package::option($package, 'handles');
+            $controller = str_replace('.', '/', $controller);
+
+            if ('home' === basename((string) $controller)) {
+                static::root($identifier, $controller, $root);
+            }
+
+            $wildcards = static::repeat('(:any?)', static::$segments);
+            $pattern = trim($root.'/'.$controller.'/'.$wildcards, '/');
+            $uses = $identifier.'@(:1)';
+
+            static::register('*', $pattern, compact('uses', 'defaults'));
+        }
+    }
+
+    /**
+     * Register root route for a controller.
+     *
+     * @param string $identifier
+     * @param string $controller
+     * @param string $root
+     */
+    protected static function root($identifier, $controller, $root)
+    {
+        $home = ('home' === $controller) ? '' : dirname((string) $controller);
+        $pattern = trim($root.'/'.$home, '/');
+
+        static::register('*', $pattern ?: '/', ['uses' => $identifier.'@index']);
+    }
+
+    /**
+     * Find a route by its name.
+     *
+     * @param string $name
+     *
+     * @return array
+     */
+    public static function find($name)
+    {
+        if (isset(static::$names[$name])) {
+            return static::$names[$name];
+        }
+
+        if (isset(static::$misses['name:'.$name])) {
+            return null;
+        }
+
+        if (0 === count(static::$names)) {
+            $packages = Package::names();
+
+            foreach ($packages as $package) {
+                Package::routes($package);
+            }
+        }
+
+        $routings = static::routes();
+
+        foreach ($routings as $method => $routes) {
+            foreach ($routes as $key => $value) {
+                if (isset($value['as']) && $value['as'] === $name) {
+                    return static::$names[$name] = [$key => $value];
+                }
+            }
+        }
+
+        static::$misses['name:'.$name] = true;
+    }
+
+    /**
+     * Find a route by its action.
+     *
+     * @param string $action
+     *
+     * @return array
+     */
+    public static function uses($action)
+    {
+        if (isset(static::$uses[$action])) {
+            return static::$uses[$action];
+        }
+
+        if (isset(static::$misses['uses:'.$action])) {
+            return null;
+        }
+
+        Package::routes(Package::name($action));
+
+        $routings = static::routes();
+
+        foreach ($routings as $method => $routes) {
+            foreach ($routes as $key => $value) {
+                if (isset($value['uses']) && $action === $value['uses']) {
+                    return static::$uses[$action] = [$key => $value];
+                }
+            }
+        }
+
+        static::$misses['uses:'.$action] = true;
+    }
+
+    /**
+     * Find a route by its method and URI.
+     *
+     * @param string $method
+     * @param string $uri
+     * @param string $domain
+     *
+     * @return Route
+     */
+    public static function route($method, $uri, $domain = null)
+    {
+        Package::boot(Package::handles($uri));
+
+        $uri = trim($uri, '/');
+        $uri = ('' === $uri) ? '/' : $uri;
+        $routes = (array) static::method($method);
+
+        if ('HEAD' === $method) {
+            $routes = Arr::get(static::$routes, 'HEAD', [])
+                + Arr::get(static::$routes, 'GET', [])
+                + Arr::get(static::$fallback, 'HEAD', [])
+                + Arr::get(static::$fallback, 'GET', []);
+        }
+
+        if (static::$domains) {
+            foreach ($routes as $key => $action) {
+                if (! isset($action['domain'])) {
+                    continue;
+                }
+
+                if (static::uri($key) === $uri && static::domain_matches($action['domain'], $domain)) {
+                    return static::matched(new Route($method, $uri, $action), $uri);
+                }
+            }
+        }
+
+        if (array_key_exists($uri, $routes)) {
+            $action = $routes[$uri];
+
+            if (! isset($action['domain'])) {
+                return static::matched(new Route($method, $uri, $action), $uri);
+            }
+        }
+
+        if (! is_null($route = static::match($method, $uri, $domain, $routes))) {
+            return static::matched($route, $uri);
+        }
+    }
+
+    /**
+     * Announce a matched route, then hand it back to the caller.
+     *
+     * @param Route  $route
+     * @param string $uri
+     *
+     * @return Route
+     */
+    protected static function matched(Route $route, $uri)
+    {
+        Hook::fire('rakit.route.matched', [$route, $uri]);
+
+        return $route;
+    }
+
+    /**
+     * Find a route by matching URI patterns.
+     *
+     * @param string $method
+     * @param string $uri
+     * @param string $domain
+     * @param array  $routes
+     *
+     * @return Route
+     */
+    protected static function match($method, $uri, $domain = null, $routes = null)
+    {
+        $routes = is_array($routes) ? $routes : static::method($method);
+
+        foreach ($routes as $route_key => $action) {
+            if (isset($action['domain']) && ! static::domain_matches($action['domain'], $domain)) {
+                continue;
+            }
+
+            $route = static::uri($route_key);
+
+            if (! isset(static::$compiled[$route])) {
+                $prefix = rtrim((string) substr($route, 0, (int) strpos($route, '(')), '/');
+                static::$compiled[$route] = (false !== strpos($route, '('))
+                    ? ['#^'.static::wildcards($route).'$#u', $prefix, strlen($prefix)]
+                    : false;
+            }
+
+            $compiled = static::$compiled[$route];
+
+            if (
+                false !== $compiled
+                && (0 === $compiled[2] || 0 === strncmp($uri, $compiled[1], $compiled[2]))
+                && preg_match($compiled[0], $uri, $parameters)
+            ) {
+                return new Route($method, $route, $action, array_slice($parameters, 1));
+            }
+        }
+    }
+
+    /**
+     * Check if domain matches the given pattern.
+     *
+     * @param string $pattern
+     * @param string $domain
+     *
+     * @return bool
+     */
+    protected static function domain_matches($pattern, $domain)
+    {
+        if (is_null($pattern) || is_null($domain)) {
+            return $pattern === $domain;
+        }
+
+        if (Str::contains($pattern, '{')) {
+            $pattern = preg_quote($pattern, '#');
+            $pattern = preg_replace('/\\\{([^}]+)\\\}/', '(?P<$1>[a-zA-Z0-9\.\-_]+)', $pattern);
+            $pattern = '#^'.$pattern.'$#';
+            return (bool) preg_match($pattern, $domain);
+        }
+
+        return $pattern === $domain;
+    }
+
+    /**
+     * Convert URI wildcards to regex.
+     *
+     * @param string $key
+     *
+     * @return string
+     */
+    protected static function wildcards($key)
+    {
+        $tokens = array_merge(static::$optional, static::$patterns);
+        $names = implode("\0", array_keys($tokens));
+
+        if (is_null(static::$splitter) || static::$splitter[0] !== $names) {
+            static::$splitter = [$names, '#('.implode('|', array_map(function ($token) {
+                return preg_quote($token, '#');
+            }, array_keys($tokens))).')#'];
+        }
+
+        $split = static::$splitter[1];
+
+        $pieces = preg_split($split, $key, -1, PREG_SPLIT_DELIM_CAPTURE);
+        $regex = '';
+
+        foreach ($pieces as $index => $piece) {
+            if (1 === $index % 2) {
+                $regex .= $tokens[$piece];
+            } else {
+                $regex .= (false !== strpos($piece, '(')) ? $piece : preg_quote($piece, '#');
+            }
+        }
+
+        return $regex;
+    }
+
+    /**
+     * Get all registered routes, fallbacks last.
+     *
+     * @return array
+     */
+    public static function routes()
+    {
+        $routes = static::$routes;
+
+        foreach (static::$methods as $method) {
+            if (! isset($routes[$method])) {
+                $routes[$method] = [];
+            }
+
+            $fallback = Arr::get(static::$fallback, $method, []);
+            $routes[$method] = array_merge($routes[$method], $fallback);
+        }
+
+        return $routes;
+    }
+
+    /**
+     * Get all registered routes for a specific method.
+     *
+     * @param string $method
+     *
+     * @return array
+     */
+    public static function method($method)
+    {
+        $routes = Arr::get(static::$routes, $method, []);
+        return array_merge($routes, Arr::get(static::$fallback, $method, []));
+    }
+
+    /**
+     * Get all supported patterns.
+     *
+     * @return array
+     */
+    public static function patterns()
+    {
+        return array_merge(static::$patterns, static::$optional);
+    }
+
+    /**
+     * Repeat a pattern for controller auto-discovery.
+     *
+     * @param string $pattern
+     * @param int    $times
+     *
+     * @return string
+     */
+    protected static function repeat($pattern, $times)
+    {
+        return implode('/', array_fill(0, $times, $pattern));
+    }
+}

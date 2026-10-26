@@ -1,0 +1,101 @@
+<?php
+
+namespace System;
+
+defined('DS') or exit('No direct access.');
+
+class Magic
+{
+    /**
+     * Contains attributes set to container.
+     *
+     * @var array
+     */
+    public $attributes = [];
+
+    /**
+     * Create a new magic container instance.
+     *
+     * @param array $attributes
+     */
+    public function __construct(array $attributes = [])
+    {
+        foreach ($attributes as $key => $value) {
+            $this->{$key} = $value;
+        }
+    }
+
+    /**
+     * Get value attribute from magic container.
+     *
+     * @param string $attribute
+     * @param mixed  $default
+     *
+     * @return mixed
+     */
+    public function get($attribute, $default = null)
+    {
+        return Arr::get($this->attributes, $attribute, $default);
+    }
+
+    /**
+     * Handle dynamic attribute setting.
+     *
+     * @param string $method
+     * @param array  $parameters
+     *
+     * @return $this
+     */
+    public function __call($method, array $parameters)
+    {
+        $this->{$method} = (count($parameters) > 0) ? $parameters[0] : true;
+        return $this;
+    }
+
+    /**
+     * Get value attribute dynamically.
+     *
+     * @param string $key
+     *
+     * @return mixed
+     */
+    public function __get($key)
+    {
+        if (array_key_exists($key, $this->attributes)) {
+            return $this->attributes[$key];
+        }
+    }
+
+    /**
+     * Set value attribute dynamically.
+     *
+     * @param string $key
+     * @param mixed  $value
+     */
+    public function __set($key, $value)
+    {
+        $this->attributes[$key] = $value;
+    }
+
+    /**
+     * Check dynamically if attribute value is set.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public function __isset($key)
+    {
+        return isset($this->attributes[$key]);
+    }
+
+    /**
+     * Unset value attribute dynamically.
+     *
+     * @param string $key
+     */
+    public function __unset($key)
+    {
+        unset($this->attributes[$key]);
+    }
+}

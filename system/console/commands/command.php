@@ -1,0 +1,121 @@
+<?php
+
+namespace System\Console\Commands;
+
+use System\Console\Color;
+
+defined('DS') or exit('No direct access.');
+
+abstract class Command
+{
+    /**
+     * Show an informational message.
+     *
+     * @param string $text
+     * @param bool   $newline
+     *
+     * @return string
+     */
+    protected function info($text, $newline = true)
+    {
+        return Color::green($text, $newline);
+    }
+
+    /**
+     * Show a warning message.
+     *
+     * @param string $text
+     * @param bool   $newline
+     *
+     * @return string
+     */
+    protected function warning($text, $newline = true)
+    {
+        return Color::yellow($text, $newline);
+    }
+
+    /**
+     * Show an error message.
+     *
+     * @param string $text
+     * @param bool   $newline
+     *
+     * @return string
+     */
+    protected function error($text, $newline = true)
+    {
+        return Color::red($text, $newline);
+    }
+
+    /**
+     * Show a progress bar.
+     *
+     * @param int $current_percentage
+     *
+     * @return string
+     */
+    protected function progress($current_percentage)
+    {
+        $current_percentage = (int) $current_percentage;
+
+        if ($current_percentage > 100) {
+            throw new \Exception('Current progress percentage should not be greater than 100');
+        }
+
+        if ($current_percentage < 0) {
+            throw new \Exception('Current progress percentage should not be less than 0');
+        }
+
+        $done = (int) floor($current_percentage / 10);
+
+        return $this->info(sprintf('%s%s', str_repeat('▓', $done), str_repeat('░', 10 - $done)), false);
+    }
+
+    /**
+     * Ask a question and return the answer.
+     *
+     * @param string $question
+     * @param string $default
+     *
+     * @return string|false
+     */
+    protected function ask($question, $default = null)
+    {
+        echo Color::yellow($question.($default ? ' '.$default : ''), true);
+        echo Color::yellow('> ', false);
+        $handle = fopen('php://stdin', 'r');
+        $answer = trim(fgets($handle));
+        fclose($handle);
+
+        return $answer ?: $default;
+    }
+
+    /**
+     * Ask a confirmation question.
+     *
+     * @param string $question
+     * @param bool   $default
+     *
+     * @return bool
+     */
+    protected function confirm($question, $default = false)
+    {
+        $answers = ['y' => true, 'n' => false];
+        $result = null;
+        $suffix = null;
+
+        do {
+            $suffix = $default ? '[Y/n]' : '[y/N]';
+            $answer = $this->ask($question.' '.$suffix, (string) ($default ? 'y' : 'n')) ?: ($default ? 'y' : 'n');
+            $answer = strtolower((string) $answer);
+
+            if (! isset($answers[$answer])) {
+                echo Color::red('Please answer with: y or n.');
+                return false;
+            }
+            $result = $answers[$answer];
+        } while (is_null($result));
+
+        return $answers[$answer];
+    }
+}

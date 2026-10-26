@@ -1,0 +1,29 @@
+<?php
+
+defined('DS') or exit('No direct access.');
+
+class stub_class_Controller extends Controller
+{
+    /**
+     * Enable RESTful routing.
+     */
+    public $restful = false;
+
+    /**
+     * Constructor.
+     */
+    public function __construct()
+    {
+        // $this->middleware('before', 'csrf|throttle:60,1')->on('post');
+    }
+
+	/**
+	 * Default action.
+	 *
+	 * @return View
+	 */
+	public function action_index()
+	{
+        return 'Hello from stub_class_Controller';
+	}
+}

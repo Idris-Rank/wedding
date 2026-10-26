@@ -1,0 +1,166 @@
+<?php
+
+namespace System\Routing;
+
+defined('DS') or exit('No direct access.');
+
+use System\Request;
+
+class Middlewares
+{
+    /**
+     * Contains the list of middlewares.
+     *
+     * @var string|array
+     */
+    public $middlewares = [];
+
+    /**
+     * Contains the middleware parameters.
+     *
+     * @var mixed
+     */
+    public $parameters;
+
+    /**
+     * Whether a middleware here may be missing. Only the global ones may: they are a
+     * convention, not something the route asked for.
+     *
+     * @var bool
+     */
+    public $optional = false;
+
+    /**
+     * Contains the list of controller method names for middleware only().
+     *
+     * @var array
+     */
+    public $only = [];
+
+    /**
+     * Contains the list of controller method names for middleware except().
+     *
+     * @var array
+     */
+    public $except = [];
+
+    /**
+     * Contains the list of controller method names for middleware on().
+     *
+     * @var array
+     */
+    public $methods = [];
+
+    /**
+     * Constructor.
+     *
+     * @param string|array $middlewares
+     * @param mixed        $parameters
+     */
+    public function __construct($middlewares, $parameters = null)
+    {
+        $this->parameters = $parameters;
+        $this->middlewares = Middleware::parse($middlewares);
+    }
+
+    /**
+     * Parse middleware string and return the middleware name and it's parameters.
+     *
+     * @param string $middleware
+     *
+     * @return array
+     */
+    public function get($middleware)
+    {
+        if (! is_null($this->parameters)) {
+            return [$middleware, $this->parameters()];
+        }
+
+        $middleware = (string) $middleware;
+        $offset = (false !== ($separator = strpos($middleware, '::'))) ? $separator + 2 : 0;
+
+        if (false !== ($colon = strpos($middleware, ':', $offset))) {
+            $parameters = explode(',', substr($middleware, $colon + 1));
+            return [substr($middleware, 0, $colon), $parameters];
+        }
+
+        return [$middleware, []];
+    }
+
+    /**
+     * Evaluate the parameters if it's a Closure.
+     *
+     * @return array
+     */
+    protected function parameters()
+    {
+        if ($this->parameters instanceof \Closure) {
+            $this->parameters = call_user_func($this->parameters);
+        }
+
+        return $this->parameters;
+    }
+
+    /**
+     * Check if the middleware applies to the given method.
+     *
+     * @param string $method
+     *
+     * @return bool
+     */
+    public function applies($method)
+    {
+        $method = strtolower((string) $method);
+
+        if (count($this->only) > 0 && ! in_array($method, array_map('strtolower', $this->only))) {
+            return false;
+        }
+
+        if (count($this->except) > 0 && in_array($method, array_map('strtolower', $this->except))) {
+            return false;
+        }
+
+        $method = strtolower((string) Request::method());
+        return count($this->methods) < 1 || in_array($method, $this->methods);
+    }
+
+    /**
+     * Set the controller methods the middleware is not attached to.
+     *
+     * @param array $methods
+     *
+     * @return Middlewares
+     */
+    public function except($methods)
+    {
+        $this->except = is_array($methods) ? $methods : func_get_args();
+        return $this;
+    }
+
+    /**
+     * The inverse of except(): only the listed methods get the middleware.
+     *
+     * @param array $methods
+     *
+     * @return Middlewares
+     */
+    public function only($methods)
+    {
+        $this->only = is_array($methods) ? $methods : func_get_args();
+        return $this;
+    }
+
+    /**
+     * Set the HTTP methods for which the middleware will run.
+     *
+     * @param array $methods
+     *
+     * @return Middlewares
+     */
+    public function on($methods)
+    {
+        $methods = is_array($methods) ? $methods : func_get_args();
+        $this->methods = array_map('strtolower', $methods);
+        return $this;
+    }
+}

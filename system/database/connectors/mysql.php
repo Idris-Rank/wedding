@@ -1,0 +1,55 @@
+<?php
+
+namespace System\Database\Connectors;
+
+defined('DS') or exit('No direct access.');
+
+use PDO;
+
+class MySQL extends Connector
+{
+    /**
+     * Connect to the database and return the PDO instance.
+     *
+     * @param array $config
+     *
+     * @return PDO
+     */
+    public function connect(array $config)
+    {
+        $pdo = new PDO($this->dsn($config), $config['username'], $config['password'], $this->options($config));
+
+        if (isset($config['charset'])) {
+            $charset = (string) $config['charset'];
+
+            if (!preg_match('/^[A-Za-z0-9_-]+$/', $charset)) {
+                throw new \InvalidArgumentException(sprintf('Invalid charset: %s', $charset));
+            }
+
+            $quoted = $pdo->quote($charset);
+            $pdo->exec("SET NAMES $quoted");
+        }
+
+        return $pdo;
+    }
+
+    /**
+     * Build the DSN string for the connection.
+     *
+     * @param array $config
+     *
+     * @return string
+     */
+    protected function dsn(array $config)
+    {
+        $dsn = 'mysql:host='.$config['host'].';dbname='.$config['database'];
+        $dsn .= isset($config['port']) ? ';port='.$config['port'] : '';
+        $dsn .= isset($config['unix_socket']) ? ';unix_socket='.$config['unix_socket'] : '';
+
+        if (isset($config['charset']) && preg_match('/^[A-Za-z0-9_-]+$/', (string) $config['charset'])) {
+            $dsn .= ';charset='.$config['charset'];
+        }
+
+        return $dsn;
+    }
+}

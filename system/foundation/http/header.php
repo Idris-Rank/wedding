@@ -1,0 +1,353 @@
+<?php
+
+namespace System\Foundation\Http;
+
+defined('DS') or exit('No direct access.');
+
+class Header implements \IteratorAggregate, \Countable
+{
+    /**
+     * The list of headers.
+     *
+     * @var array
+     */
+    protected $headers;
+
+    /**
+     * The cache control directives.
+     *
+     * @var array
+     */
+    protected $cacheControl;
+
+    /**
+     * Constructor.
+     *
+     * @param array $headers
+     */
+    public function __construct(array $headers = [])
+    {
+        $this->cacheControl = [];
+        $this->headers = [];
+
+        foreach ($headers as $key => $values) {
+            $this->set($key, $values);
+        }
+    }
+
+    /**
+     * Return string representation of the headers.
+     *
+     * @return string
+     */
+    public function __toString()
+    {
+        if (! $this->headers) {
+            return '';
+        }
+
+        $max = max(array_map(function ($key) {
+            return mb_strlen((string) $key, '8bit');
+        }, array_keys($this->headers))) + 1;
+        ksort($this->headers);
+        $content = '';
+
+        foreach ($this->headers as $name => $values) {
+            $name = static::displayKey($name);
+
+            foreach ($values as $value) {
+                $content .= sprintf("%-{$max}s %s\r\n", $name.':', $value);
+            }
+        }
+
+        return $content;
+    }
+
+    /**
+     * Get all headers.
+     *
+     * @return array
+     */
+    public function all()
+    {
+        return $this->headers;
+    }
+
+    /**
+     * Get all header keys.
+     *
+     * @return array
+     */
+    public function keys()
+    {
+        return array_keys($this->headers);
+    }
+
+    /**
+     * Replace all headers.
+     *
+     * @param array $headers
+     */
+    public function replace(array $headers = [])
+    {
+        $this->headers = [];
+        $this->add($headers);
+    }
+
+    /**
+     * Add array of headers.
+     *
+     * @param array $headers
+     */
+    public function add(array $headers)
+    {
+        foreach ($headers as $key => $values) {
+            $this->set($key, $values);
+        }
+    }
+
+    /**
+     * Get header value by key.
+     *
+     * @param string $key
+     * @param mixed  $default
+     * @param bool   $first
+     *
+     * @return string|array
+     */
+    public function get($key, $default = null, $first = true)
+    {
+        $key = $this->standardizeKey($key);
+        return array_key_exists($key, $this->headers)
+            ? ($first ? (count($this->headers[$key]) ? $this->headers[$key][0] : $default) : $this->headers[$key])
+            : ((null === $default) ? ($first ? null : []) : ($first ? $default : [$default]));
+    }
+
+    /**
+     * Set header value by key.
+     *
+     * @param string       $key
+     * @param string|array $values
+     * @param bool         $replace
+     */
+    public function set($key, $values, $replace = true)
+    {
+        // Defense-in-depth: strip CRLF from header names and values
+        $key = str_replace(["\r", "\n", "\0"], '', (string) $key);
+        $key = $this->standardizeKey($key);
+        $values = array_values((array) $values);
+
+        foreach ($values as $i => $v) {
+            $values[$i] = str_replace(["\r", "\n", "\0"], '', (string) $v);
+        }
+
+        $this->headers[$key] = (true === $replace || ! isset($this->headers[$key]))
+            ? $values
+            : array_merge($this->headers[$key], $values);
+
+        if ('cache-control' === $key) {
+            $this->cacheControl = $this->parseCacheControl(isset($values[0]) ? $values[0] : '');
+        }
+    }
+
+    /**
+     * Check if header exists by key.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public function has($key)
+    {
+        return array_key_exists($this->standardizeKey($key), $this->headers);
+    }
+
+    /**
+     * Check if header contains specific value.
+     *
+     * @param string $key
+     * @param string $value
+     *
+     * @return bool
+     */
+    public function contains($key, $value)
+    {
+        return in_array($value, $this->get($key, null, false));
+    }
+
+    /**
+     * Remove header by key.
+     *
+     * @param string $key
+     */
+    public function remove($key)
+    {
+        $key = $this->standardizeKey($key);
+        unset($this->headers[$key]);
+
+        if ('cache-control' === $key) {
+            $this->cacheControl = [];
+        }
+    }
+
+    /**
+     * Get header date value by key.
+     *
+     * @param string    $key
+     * @param \DateTime $default
+     *
+     * @return \DateTime|null
+     */
+    public function getDate($key, $default = null)
+    {
+        if (null === ($value = $this->get($key))) {
+            return $default;
+        }
+
+        if (false === ($date = \DateTime::createFromFormat(DATE_RFC2822, $value))) {
+            throw new \RuntimeException(sprintf("The '%s' HTTP header is not parseable (%s).", $key, $value));
+        }
+
+        return $date;
+    }
+
+    /**
+     * Add a Cache-Control directive.
+     *
+     * @param string $key
+     * @param mixed  $value
+     */
+    public function addCacheControlDirective($key, $value = true)
+    {
+        $this->cacheControl[$key] = $value;
+        $this->set('Cache-Control', $this->getCacheControlHeader());
+    }
+
+    /**
+     * Check if the given Cache-Control directive is set.
+     *
+     * @param string $key
+     *
+     * @return bool
+     */
+    public function hasCacheControlDirective($key)
+    {
+        return array_key_exists($key, $this->cacheControl);
+    }
+
+    /**
+     * Get a Cache-Control directive by its key.
+     *
+     * @param string $key
+     *
+     * @return string|null
+     */
+    public function getCacheControlDirective($key)
+    {
+        return array_key_exists($key, $this->cacheControl) ? $this->cacheControl[$key] : null;
+    }
+
+    /**
+     * Remove a Cache-Control directive by its key.
+     *
+     * @param string $key
+     */
+    public function removeCacheControlDirective($key)
+    {
+        unset($this->cacheControl[$key]);
+        $this->set('Cache-Control', $this->getCacheControlHeader());
+    }
+
+    /**
+     * Get an array iterator for the headers.
+     *
+     * @return \ArrayIterator
+     */
+    #[\ReturnTypeWillChange]
+    public function getIterator()
+    {
+        return new \ArrayIterator($this->headers);
+    }
+
+    /**
+     * Count all headers.
+     *
+     * @return int
+     */
+    #[\ReturnTypeWillChange]
+    public function count()
+    {
+        return count($this->headers);
+    }
+
+    /**
+     * Get the full Cache-Control header value.
+     *
+     * @return string
+     */
+    protected function getCacheControlHeader()
+    {
+        ksort($this->cacheControl);
+        $parts = [];
+
+        foreach ($this->cacheControl as $key => $value) {
+            if (true === $value) {
+                $parts[] = $key;
+            } else {
+                if (preg_match('/[^a-zA-Z0-9._-]/', (string) $value)) {
+                    $value = '"'.$value.'"';
+                }
+
+                $parts[] = $key.'='.$value;
+            }
+        }
+
+        return implode(', ', $parts);
+    }
+
+    /**
+     * Parse header Cache-Control.
+     *
+     * @param string $header
+     *
+     * @return array
+     */
+    protected function parseCacheControl($header)
+    {
+        $pattern = '/([a-zA-Z][a-zA-Z_-]*)\s*(?:=(?:"([^"]*)"|([^ \t",;]*)))?/';
+        preg_match_all($pattern, $header, $matches, PREG_SET_ORDER);
+        $parsed = [];
+
+        foreach ($matches as $match) {
+            $parsed[strtolower((string) $match[1])] = isset($match[3])
+                ? $match[3]
+                : (isset($match[2]) ? $match[2] : true);
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * Standardize a header name to its lookup key (lowercase, '_' becomes '-'), like Symfony.
+     *
+     * @param string $key
+     *
+     * @return string
+     */
+    protected static function standardizeKey($key)
+    {
+        return strtr(strtolower((string) $key), '_', '-');
+    }
+
+    /**
+     * Title-case a header name for display, e.g. 'content-type' becomes 'Content-Type'.
+     *
+     * @param string $key
+     *
+     * @return string
+     */
+    protected static function displayKey($key)
+    {
+        return str_replace(' ', '-', ucwords(str_replace('-', ' ', (string) $key)));
+    }
+}

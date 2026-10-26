@@ -1,0 +1,362 @@
+<?php
+
+namespace System\Console;
+
+defined('DS') or exit('No direct access.');
+
+class Table
+{
+    /** @var int */
+    const HEADER_INDEX = -1;
+
+    /** @var string */
+    const HORIZONTAL_ROW = 'HR';
+
+    /**
+     * Table data.
+     *
+     * @var array
+     */
+    protected $data = [];
+
+    /**
+     * Whether to display table borders.
+     *
+     * @var bool
+     */
+    protected $border = true;
+
+    /**
+     * Whether to display all borders.
+     *
+     * @var bool
+     */
+    protected $all_borders = false;
+
+    /**
+     * Padding size.
+     *
+     * @var int
+     */
+    protected $padding = 1;
+
+    /**
+     * Indent size.
+     *
+     * @var int
+     */
+    protected $indent = 0;
+
+    /**
+     * Current row index.
+     *
+     * @var int
+     */
+    private $row_index = -1;
+
+    /**
+     * Column widths.
+     *
+     * @var array
+     */
+    private $column_widths = [];
+
+    /**
+     * Add a table header.
+     *
+     * @param string $content
+     */
+    public function add_header($content = '')
+    {
+        $this->data[self::HEADER_INDEX][] = $content;
+        return $this;
+    }
+
+    /**
+     * Alias for add_header.
+     *
+     * @param array $content
+     */
+    public function set_headers(array $content)
+    {
+        $this->data[self::HEADER_INDEX] = $content;
+        return $this;
+    }
+
+    /**
+     * Get table header.
+     *
+     * @return array
+     */
+    public function get_headers()
+    {
+        return isset($this->data[self::HEADER_INDEX]) ? $this->data[self::HEADER_INDEX] : null;
+    }
+
+    /**
+     * Add a table row.
+     *
+     * @param array $data
+     */
+    public function add_row(array $data = [])
+    {
+        $this->row_index++;
+
+        if (is_array($data) && ! empty($data)) {
+            foreach ($data as $col => $content) {
+                $this->data[$this->row_index][$col] = $content;
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add a table column.
+     *
+     * @param array $content
+     * @param int   $column
+     * @param int   $row
+     */
+    public function add_column($content, $column = null, $row = null)
+    {
+        $row = is_null($row) ? $this->row_index : $row;
+
+        if (is_null($column)) {
+            $column = isset($this->data[$row]) ? count($this->data[$row]) : 0;
+        }
+
+        $this->data[$row][$column] = $content;
+        return $this;
+    }
+
+    /**
+     * Show table border?
+     */
+    public function show_border()
+    {
+        $this->border = true;
+        return $this;
+    }
+
+    /**
+     * Hide table border?
+     */
+    public function hide_border()
+    {
+        $this->border = false;
+        return $this;
+    }
+
+    /**
+     * Show all table borders?
+     */
+    public function show_borders()
+    {
+        $this->show_border();
+        $this->all_borders = true;
+        return $this;
+    }
+
+    /**
+     * Set padding.
+     *
+     * @param int $value
+     */
+    public function set_padding($value = 1)
+    {
+        $this->padding = $value;
+        return $this;
+    }
+
+    /**
+     * Set table indentation.
+     *
+     * @param int $value
+     */
+    public function set_indent($value = 0)
+    {
+        $this->indent = $value;
+        return $this;
+    }
+
+    /**
+     * Add border line.
+     */
+    public function add_border_line()
+    {
+        $this->row_index++;
+        $this->data[$this->row_index] = self::HORIZONTAL_ROW;
+        return $this;
+    }
+
+    /**
+     * Print/display the table.
+     */
+    public function display()
+    {
+        echo $this->get_table();
+    }
+
+    /**
+     * Render the table.
+     *
+     * @return string
+     */
+    public function get_table()
+    {
+        $this->calculate_column_width();
+        $output = $this->border ? $this->get_border_line() : '';
+
+        foreach ($this->data as $y => $row) {
+            if (self::HORIZONTAL_ROW === $row) {
+                if (! $this->all_borders) {
+                    $output .= $this->get_border_line();
+                    unset($this->data[$y]);
+                }
+
+                continue;
+            }
+
+            foreach ($row as $x => $cell) {
+                $output .= $this->get_cell_output($x, $row);
+            }
+
+            $output .= PHP_EOL;
+
+            if (self::HEADER_INDEX === $y) {
+                $output .= $this->get_border_line();
+            } else {
+                if ($this->all_borders) {
+                    $output .= $this->get_border_line();
+                }
+            }
+        }
+
+        if (! $this->all_borders) {
+            $output .= $this->border ? $this->get_border_line() : '';
+        }
+
+        return is_cli() ? $output : '<pre>'.$output.'</pre>';
+    }
+
+    /**
+     * Get the border line.
+     *
+     * @return string
+     */
+    private function get_border_line()
+    {
+        $output = '';
+
+        if (isset($this->data[0])) {
+            $count = count($this->data[0]);
+        } elseif (isset($this->data[self::HEADER_INDEX])) {
+            $count = count($this->data[self::HEADER_INDEX]);
+        } else {
+            return $output;
+        }
+
+        for ($column = 0; $column < $count; $column++) {
+            $output .= $this->get_cell_output($column);
+        }
+
+        return $output.($this->border ? '+' : '').PHP_EOL;
+    }
+
+    /**
+     * Get the cell output.
+     *
+     * @param int   $index
+     * @param array $row
+     *
+     * @return string
+     */
+    private function get_cell_output($index, array $row = [])
+    {
+        $cell = ($row && isset($row[$index])) ? (string) $row[$index] : ($row ? '' : '-');
+        $width = isset($this->column_widths[$index]) ? $this->column_widths[$index] : 0;
+        $padding = str_repeat($row ? ' ' : '-', $this->padding);
+
+        $output = (0 === $index) ? str_repeat(' ', $this->indent) : '';
+        $output .= $this->border ? ($row ? '|' : '+') : '';
+        $output .= $padding;
+
+        $cell = trim(preg_replace('/\s+/', ' ', $cell));
+        $content = preg_replace('#\x1b[[][^A-Za-z]*[A-Za-z]#', '', $cell);
+        $delta = mb_strlen($cell, 'UTF-8') - mb_strlen($content, 'UTF-8');
+
+        $output .= $this->strpad($cell, $width + $delta, $row ? ' ' : '-');
+        $output .= $padding;
+        $output .= ($row && $index === (count($row) - 1) && $this->border) ? ($row ? '|' : '+') : '';
+
+        return $output;
+    }
+
+    /**
+     * Calculate column width.
+     *
+     * @return int|array
+     */
+    private function calculate_column_width()
+    {
+        foreach ($this->data as $y => $row) {
+            if (is_array($row)) {
+                foreach ($row as $x => $col) {
+                    $width = mb_strlen((string) preg_replace('/\x1b[[][^A-Za-z]*[A-Za-z]/', '', $col), 'UTF-8');
+
+                    if (! isset($this->column_widths[$x])) {
+                        $this->column_widths[$x] = $width;
+                    } else {
+                        if ($width > $this->column_widths[$x]) {
+                            $this->column_widths[$x] = $width;
+                        }
+                    }
+                }
+            }
+        }
+
+        return $this->column_widths;
+    }
+
+    /**
+     * Pad a string.
+     *
+     * @param string $str
+     * @param int    $amount
+     * @param string $content
+     * @param int    $direction
+     *
+     * @return string
+     */
+    private function strpad($str, $amount, $content = ' ', $direction = STR_PAD_RIGHT)
+    {
+        $len = mb_strlen((string) $str, 'UTF-8');
+        $padlen = mb_strlen((string) $content, 'UTF-8');
+
+        if (! $len && (STR_PAD_RIGHT === $direction || STR_PAD_LEFT === $direction)) {
+            $len = 1;
+        }
+
+        if (! $amount || ! $padlen || $amount <= $len) {
+            return $str;
+        }
+
+        $result = null;
+        $repeat = (int) ceil($len - $padlen + $amount);
+
+        if (STR_PAD_RIGHT === $direction) {
+            $result = mb_substr($str.str_repeat($content, $repeat), 0, $amount, 'UTF-8');
+        } elseif (STR_PAD_LEFT === $direction) {
+            $result = mb_substr(str_repeat($content, $repeat).$str, -$amount, $amount, 'UTF-8');
+        } elseif (STR_PAD_BOTH === $direction) {
+            $length = ($amount - $len) / 2;
+            $repeat = str_repeat((string) $content, (int) ceil($length / $padlen));
+            $result = mb_substr($repeat, 0, (int) floor($length), 'UTF-8')
+                . $str
+                . mb_substr($repeat, 0, (int) ceil($length), 'UTF-8');
+        }
+
+        return $result;
+    }
+}
