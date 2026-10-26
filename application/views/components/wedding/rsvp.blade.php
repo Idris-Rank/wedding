@@ -12,7 +12,8 @@
             </p>
         </div>
 
-        <form id="rsvp-form" class="relative border border-forest/10 bg-white px-6 py-9 shadow-soft transition duration-500 before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-gradient-to-r before:from-transparent before:via-gold before:to-transparent hover:-translate-y-1 hover:border-gold/60 hover:shadow-2xl sm:px-9 sm:py-10">
+        <form id="rsvp-form" action="{{ url('rsvp') }}" method="post" class="relative border border-forest/10 bg-white px-6 py-9 shadow-soft transition duration-500 before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-gradient-to-r before:from-transparent before:via-gold before:to-transparent hover:-translate-y-1 hover:border-gold/60 hover:shadow-2xl sm:px-9 sm:py-10">
+            {!! csrf_field() !!}
             <p class="text-[10px] font-semibold uppercase tracking-[.35em] text-clay">Konfirmasi kehadiran</p>
 
             <div class="mt-7">
@@ -29,8 +30,24 @@
                 </select>
             </div>
 
+            <div class="mt-6">
+                <label class="text-[10px] font-semibold uppercase tracking-[.3em] text-forest" for="guest-count">Jumlah tamu</label>
+                <select class="mt-1 w-full border-0 border-b border-forest/20 bg-transparent px-0 py-3 text-[15px] text-ink focus:border-gold focus:outline-none focus:ring-0" id="guest-count" name="guest_count" required>
+                    <option value="">Pilih jumlah</option>
+                    <option value="1">1 orang</option>
+                    <option value="2">2 orang</option>
+                    <option value="3">3 orang</option>
+                    <option value="4">4 orang</option>
+                </select>
+            </div>
+
+            <div class="mt-6">
+                <label class="text-[10px] font-semibold uppercase tracking-[.3em] text-forest" for="message">Ucapan (opsional)</label>
+                <textarea class="mt-1 min-h-24 w-full resize-y border border-forest/15 bg-transparent px-3 py-2 text-[15px] text-ink placeholder:text-ink/40 focus:border-gold focus:outline-none focus:ring-0" id="message" name="message" maxlength="1000" placeholder="Tulis doa dan ucapan Panjenengan"></textarea>
+            </div>
+
             <button class="mt-8 inline-flex min-h-12 w-full items-center justify-center bg-forest px-7 py-3 text-[11px] font-semibold uppercase tracking-[.22em] text-ivory transition duration-300 hover:-translate-y-0.5 hover:bg-gold hover:text-deep focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold" type="submit">Kirim RSVP</button>
-            <p id="form-status" class="mt-4 min-h-5 text-center text-xs text-clay" role="status" aria-live="polite"></p>
+            <p id="form-status" class="mt-4 min-h-5 text-center text-xs text-clay" role="status" aria-live="polite">{!! isset($errors) && $errors->has('name') ? $errors->first('name') : '' !!}</p>
         </form>
     </div>
 </section>

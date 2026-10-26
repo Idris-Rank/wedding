@@ -8,7 +8,7 @@ class Create_Wedding_Gifts_Table
     {
         Schema::create('wedding_gifts', function ($table) {
             $table->increments('id');
-            $table->integer('wedding_id')->unsigned();
+            $table->integer('wedding_id');
             $table->string('provider', 50);
             $table->string('account_name', 150)->nullable();
             $table->string('account_number', 100);

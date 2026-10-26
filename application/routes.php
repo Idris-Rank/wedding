@@ -13,7 +13,8 @@ defined('DS') or exit('No direct access.');
 |
 */
 
-Route::get('/', 'home@index');
+Route::get('/', 'theme@index');
+Route::post('rsvp', 'theme@rsvp');
 
 // Health check for load balancers and uptime monitors: 200 while the application
 // boots and routes, 503 during maintenance ('php rakit down').

@@ -52,8 +52,9 @@
             </div>
             <div class="relative mx-auto mt-10 max-w-2xl border border-forest/10 bg-white px-6 py-9 shadow-soft before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-gradient-to-r before:from-transparent before:via-gold before:to-transparent sm:px-10 sm:py-10">
                 <div class="flex flex-col gap-4 sm:flex-row">
-                    <div class="flex flex-1 items-center justify-between gap-4 border border-forest/10 bg-sand/70 px-5 py-4"><div><p class="text-[10px] font-semibold uppercase tracking-[.3em] text-clay">BCA</p><p class="mt-1.5 font-display text-2xl text-forest">1234567890</p></div><button class="min-h-10 shrink-0 border border-forest/15 bg-white px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-forest transition hover:bg-gold hover:text-deep" type="button" data-copy="1234567890">Salin</button></div>
-                    <div class="flex flex-1 items-center justify-between gap-4 border border-forest/10 bg-sand/70 px-5 py-4"><div><p class="text-[10px] font-semibold uppercase tracking-[.3em] text-clay">DANA</p><p class="mt-1.5 font-display text-2xl text-forest">081234567890</p></div><button class="min-h-10 shrink-0 border border-forest/15 bg-white px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-forest transition hover:bg-gold hover:text-deep" type="button" data-copy="081234567890">Salin</button></div>
+                    @foreach ($wedding['gifts'] as $gift)
+                        <div class="flex flex-1 items-center justify-between gap-4 border border-forest/10 bg-sand/70 px-5 py-4"><div><p class="text-[10px] font-semibold uppercase tracking-[.3em] text-clay">{{ $gift->provider }}</p><p class="mt-1.5 font-display text-2xl text-forest">{{ $gift->account_number }}</p><p class="text-xs text-ink/55">{{ $gift->account_name }}</p></div><button class="min-h-10 shrink-0 border border-forest/15 bg-white px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-forest transition hover:bg-gold hover:text-deep" type="button" data-copy="{{ $gift->account_number }}">Salin</button></div>
+                    @endforeach
                 </div>
                 <p id="copy-status" class="mt-5 min-h-5 text-center text-xs text-clay" role="status" aria-live="polite"></p>
             </div>
@@ -115,7 +116,20 @@
                 revealItems.forEach(function (item) { observer.observe(item); });
             } else { revealItems.forEach(function (item) { item.classList.remove('opacity-0', 'translate-y-7'); }); }
 
-            document.getElementById('rsvp-form').addEventListener('submit', function (event) { event.preventDefault(); document.getElementById('form-status').textContent = 'Terima kasih, konfirmasi Panjenengan sudah diterima.'; this.reset(); });
+            var rsvpForm = document.getElementById('rsvp-form');
+            rsvpForm.addEventListener('submit', function (event) {
+                if (!window.fetch) { return; }
+                event.preventDefault();
+                var status = document.getElementById('form-status');
+                var submit = rsvpForm.querySelector('button[type="submit"]');
+                status.textContent = 'Mengirim konfirmasi...';
+                submit.disabled = true;
+                fetch(rsvpForm.action, { method: 'POST', body: new FormData(rsvpForm), headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+                    .then(function (response) { return response.json().then(function (body) { return { ok: response.ok, body: body }; }); })
+                    .then(function (result) { status.textContent = result.body.message || (result.ok ? 'Konfirmasi diterima.' : 'Data belum valid.'); if (result.ok) { rsvpForm.reset(); } })
+                    .catch(function () { status.textContent = 'Konfirmasi gagal dikirim. Silakan coba lagi.'; })
+                    .then(function () { submit.disabled = false; });
+            });
             document.querySelectorAll('[data-copy]').forEach(function (button) { button.addEventListener('click', function () { var value = button.getAttribute('data-copy'); if (navigator.clipboard) { navigator.clipboard.writeText(value); } document.getElementById('copy-status').textContent = 'Nomor berhasil disalin: ' + value; }); });
         });
     </script>

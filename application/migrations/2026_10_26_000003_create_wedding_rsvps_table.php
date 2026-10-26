@@ -8,7 +8,7 @@ class Create_Wedding_Rsvps_Table
     {
         Schema::create('wedding_rsvps', function ($table) {
             $table->increments('id');
-            $table->integer('wedding_id')->unsigned();
+            $table->integer('wedding_id');
             $table->string('guest_name', 150);
             $table->string('phone', 30)->nullable();
             $table->enum('attendance', ['yes', 'no', 'maybe'])->defaults('maybe')->index();

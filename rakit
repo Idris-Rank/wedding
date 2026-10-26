@@ -1,0 +1,25 @@
+#!/usr/bin/env php
+<?php
+
+// --------------------------------------------------------------
+// Record the start timer for console diagnostics.
+// --------------------------------------------------------------
+define('RAKIT_START', microtime(true));
+
+// --------------------------------------------------------------
+// Define the directory separator used by the framework.
+// --------------------------------------------------------------
+define('DS', DIRECTORY_SEPARATOR);
+
+// --------------------------------------------------------------
+// Load project paths and the framework console bootstrap.
+// --------------------------------------------------------------
+require __DIR__.DS.'paths.php';
+require path('system').'core.php';
+
+// --------------------------------------------------------------
+// This entry point is intended for CLI usage only.
+// --------------------------------------------------------------
+is_cli() or exit('Please run this script from your console.');
+
+require path('system').'console'.DS.'boot.php';

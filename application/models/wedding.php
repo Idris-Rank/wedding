@@ -4,6 +4,8 @@ defined('DS') or exit('No direct access.');
 
 class Wedding extends Facile
 {
+    public static $table = 'weddings';
+
     public static $fillable = [
         'slug', 'groom_name', 'bride_name', 'groom_parents', 'bride_parents',
         'quote', 'quote_source', 'hero_image', 'audio_path', 'whatsapp', 'is_active',

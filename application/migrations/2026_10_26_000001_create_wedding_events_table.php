@@ -8,7 +8,7 @@ class Create_Wedding_Events_Table
     {
         Schema::create('wedding_events', function ($table) {
             $table->increments('id');
-            $table->integer('wedding_id')->unsigned();
+            $table->integer('wedding_id');
             $table->string('event_type', 30);
             $table->string('title', 100);
             $table->date('event_date');

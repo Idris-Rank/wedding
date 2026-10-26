@@ -8,7 +8,7 @@ class Create_Wedding_Galleries_Table
     {
         Schema::create('wedding_galleries', function ($table) {
             $table->increments('id');
-            $table->integer('wedding_id')->unsigned();
+            $table->integer('wedding_id');
             $table->string('image_path', 255);
             $table->string('alt_text', 255);
             $table->string('caption', 255)->nullable();
