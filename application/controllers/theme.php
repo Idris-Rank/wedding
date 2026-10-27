@@ -34,14 +34,16 @@ class Theme_Controller extends Controller
             'quote' => $record->quote,
             'quote_source' => $record->quote_source,
             'whatsapp' => $record->whatsapp,
-            'hero_image' => $record->hero_image,
-            'audio_path' => $record->audio_path,
+            'hero_image' => $this->asset_or_null($record->hero_image, 'image'),
+            'bride_image' => $this->asset_or_null($record->bride_image, 'image'),
+            'groom_image' => $this->asset_or_null($record->groom_image, 'image'),
+            'audio_path' => $this->asset_or_null($record->audio_path, 'audio'),
             'story' => [
                 'eyebrow' => 'Cerita kami',
                 'title' => 'Dari sebuah pertemuan, menuju selamanya.',
                 'body' => 'Berawal dari pertemuan sederhana di Yogyakarta, dua keluarga dan dua perjalanan hidup akhirnya dipertemukan dalam satu niat baik. Dengan doa orang tua dan restu keluarga, kami memilih untuk berjalan bersama.',
                 'quote' => 'Rukun agawe santosa, crah agawe bubrah.',
-                'image' => 'https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=1000&q=85',
+                'image' => $this->asset_or_null($record->hero_image, 'image'),
             ],
             'events' => $events->map(function ($event) {
                 return [
@@ -59,6 +61,11 @@ class Theme_Controller extends Controller
         ];
 
         return View::make('home', compact('wedding'));
+    }
+
+    protected function asset_or_null($asset, $type)
+    {
+        return ($asset && is_file(path('assets').str_replace('/', DS, $asset))) ? $asset : null;
     }
 
     public function action_rsvp()

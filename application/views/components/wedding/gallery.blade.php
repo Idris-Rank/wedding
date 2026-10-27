@@ -7,12 +7,14 @@
         </div>
 
         <div class="mt-14 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:grid-rows-[15rem_15rem] sm:gap-4">
+            @if (!count($wedding['galleries']))<div class="col-span-2 rounded-lg border border-dashed border-forest/15 bg-sand px-5 py-12 text-center sm:col-span-4"><p class="font-display text-2xl text-forest">Galeri segera hadir</p><p class="mt-2 text-sm text-ink/60">Momen pilihan kami akan ditampilkan di sini.</p></div>@endif
             @foreach ($wedding['galleries'] as $gallery)
-                <figure class="group relative {{ $loop->first ? 'col-span-2 row-span-2 h-56 sm:h-full' : 'h-40 sm:h-full' }} overflow-hidden border border-gold/30 bg-sand">
-                    <img class="h-full w-full object-cover transition duration-700 group-hover:scale-105" src="{{ asset($gallery->image_path) }}" alt="{{ $gallery->alt_text }}" loading="lazy" decoding="async">
+                <figure class="group relative {{ $loop->first ? 'col-span-2 row-span-2 h-56 sm:h-full' : 'h-40 sm:h-full' }} overflow-hidden rounded-lg border border-gold/30 bg-sand">
+                    <img class="gallery-image h-full w-full object-cover transition duration-700 group-hover:scale-105" src="{{ asset($gallery->image_path) }}" alt="{{ $gallery->alt_text }}" loading="lazy" decoding="async">
                     <figcaption class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-deep/85 via-deep/40 to-transparent p-4 text-left text-[10px] uppercase tracking-[.25em] text-ivory opacity-0 transition duration-500 group-hover:opacity-100">{{ $gallery->caption }}</figcaption>
                 </figure>
             @endforeach
         </div>
     </div>
+    <script>document.querySelectorAll('.gallery-image').forEach(function (image) { image.addEventListener('error', function () { image.replaceWith(document.createTextNode('Foto tidak tersedia')); }); });</script>
 </section>

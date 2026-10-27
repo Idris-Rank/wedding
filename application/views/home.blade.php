@@ -63,13 +63,13 @@
 
     <footer class="relative overflow-hidden bg-deep px-6 py-16 text-center text-ivory">
         <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gold/45 to-transparent"></div>
-        <p class="font-display text-3xl tracking-wide text-gold">R <span class="italic">&amp;</span> J</p>
+        <p class="font-display text-3xl tracking-wide text-gold">{{ strtoupper(substr($wedding['bride'], 0, 1)) }} <span class="italic">&amp;</span> {{ strtoupper(substr($wedding['groom'], 0, 1)) }}</p>
         <p class="mt-6 font-display text-4xl sm:text-5xl">{{ $wedding['short_names'] }}</p>
         <p class="mt-4 text-sm text-ivory/60">Terima kasih atas doa dan restu Panjenengan.</p>
         <p class="mt-8 text-[10px] uppercase tracking-[.35em] text-gold/85">{{ $wedding['date'] }} &middot; {{ $wedding['city'] }}</p>
     </footer>
 
-    <audio id="wedding-audio" loop preload="none"><source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg"></audio>
+    @if ($wedding['audio_path'])<audio id="wedding-audio" loop preload="none"><source src="{{ asset($wedding['audio_path']) }}" type="audio/mpeg"></audio>@endif
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             var opening = document.getElementById('opening');
@@ -78,9 +78,6 @@
             var musicButton = document.getElementById('music-toggle');
             var musicLabel = document.getElementById('music-label');
             var musicBars = document.querySelectorAll('[data-music-bar]');
-            musicButton.classList.remove('hidden');
-            musicButton.classList.add('flex');
-
             function setMusicState(playing) {
                 musicButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
                 musicLabel.textContent = playing ? 'Jeda musik' : 'Putar musik';
@@ -90,15 +87,19 @@
                 });
             }
 
+            if (audio && musicButton) {
+                musicButton.classList.remove('hidden');
+                musicButton.classList.add('flex');
+            }
             openButton.addEventListener('click', function () {
                 opening.classList.add('opacity-0', 'invisible', 'pointer-events-none');
                 document.body.classList.remove('overflow-hidden');
-                audio.play().then(function () { setMusicState(true); }).catch(function () {});
+                if (audio) { audio.play().then(function () { setMusicState(true); }).catch(function () {}); }
             });
-            musicButton.addEventListener('click', function () {
+            if (audio && musicButton) { musicButton.addEventListener('click', function () {
                 if (audio.paused) { audio.play().then(function () { setMusicState(true); }).catch(function () {}); }
                 else { audio.pause(); setMusicState(false); }
-            });
+            }); }
 
             var countdown = document.getElementById('countdown');
             var target = new Date(countdown.getAttribute('data-target')).getTime();

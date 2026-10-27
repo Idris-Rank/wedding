@@ -7,6 +7,7 @@ RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 RewriteRule (^|/)\.(?!well-known/) - [F,L]
 RewriteRule ^(application|packages|storage|system|vendor|frontend|tests)/(.*)?$ / [F,L]
 RewriteRule ^(key\.php|paths\.php|_ide_helper\.php|rakit|doctum\.phar|repositories\.json|composer\.(lock|json))$ / [F,L]
+RewriteRule ^assets/(images/(gallery|wedding)|audio/wedding)/.*\.(php[0-9]?|phtml|phar|cgi|pl|py|sh|js|html?)$ / [F,L,NC]
 
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

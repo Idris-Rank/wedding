@@ -8,7 +8,7 @@ class Wedding extends Facile
 
     public static $fillable = [
         'slug', 'groom_name', 'bride_name', 'groom_parents', 'bride_parents',
-        'quote', 'quote_source', 'hero_image', 'audio_path', 'whatsapp', 'is_active',
+        'quote', 'quote_source', 'hero_image', 'bride_image', 'groom_image', 'audio_path', 'whatsapp', 'is_active',
     ];
 
     public static $casts = [
