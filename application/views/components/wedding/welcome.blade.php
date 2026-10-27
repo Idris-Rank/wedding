@@ -1,5 +1,5 @@
 <section class="reveal relative overflow-hidden px-6 py-24 text-center opacity-0 translate-y-7 transition duration-700 sm:py-32" id="welcome">
-    <div class="pointer-events-none absolute inset-0 bg-[url('{{ asset('images/ornament-kawung.svg') }}')] bg-[length:220px_220px] bg-center opacity-[.08]"></div>
+    <div class="pointer-events-none absolute inset-0 bg-[url('../images/ornament-kawung.svg')] bg-[length:220px_220px] bg-center opacity-[.08]"></div>
     <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gold/40 to-transparent"></div>
 
     <div class="relative mx-auto max-w-3xl">

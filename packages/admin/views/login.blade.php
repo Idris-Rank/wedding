@@ -2,8 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login Admin Wedding</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>tailwind.config={theme:{extend:{colors:{forest:'#30483b',cream:'#fbf8f1',clay:'#b9785d',gold:'#c8a66a'},fontFamily:{display:['Cormorant Garamond','serif'],sans:['DM Sans','sans-serif']}}}};</script>
+    <link rel="stylesheet" href="{{ asset('css/admin.min.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body class="flex min-h-screen items-center justify-center bg-cream px-6 font-sans text-ink">

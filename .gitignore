@@ -1,5 +1,6 @@
 # Dependencies
 /vendor/
+/node_modules/
 
 # Application secrets and local environment files
 /key.php

@@ -6,26 +6,7 @@
     <title>Undangan Pernikahan | {{ $wedding['short_names'] }}</title>
     <meta name="description" content="Undangan pernikahan {{ $wedding['short_names'] }}, {{ $wedding['date'] }} di {{ $wedding['city'] }}.">
     <meta name="theme-color" content="#2d1b12">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                         ivory: '#fbf8f0', sand: '#eee5d4', sage: '#8b9789', forest: '#26372f', deep: '#1d2924', clay: '#874b36', ink: '#2d302b', gold: '#b99452', champagne: '#dfc894', sogan: '#762f25', wood: '#5c3928',
-                        jogja: { 50: '#fbf8f1', 100: '#f4ead6', 300: '#d6b878', 500: '#a87a32', 700: '#6d431c', 900: '#2d1b12' }
-                    },
-        fontFamily: { display: ['Cormorant Garamond', 'Georgia', 'serif'], sans: ['DM Sans', 'system-ui', 'sans-serif'] },
-                    boxShadow: { soft: '0 20px 60px rgba(45, 27, 18, .12)' },
-                    keyframes: {
-                        fadeUp: { '0%': { opacity: '0', transform: 'translateY(28px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
-                        musicBar: { '0%': { height: '5px' }, '100%': { height: '15px' } }
-                    },
-                    animation: { 'fade-up': 'fadeUp 1s ease-out both', 'music-bar': 'musicBar .8s ease-in-out infinite alternate' }
-                }
-            }
-        };
-    </script>
+    <link rel="stylesheet" href="{{ asset('css/theme.min.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">

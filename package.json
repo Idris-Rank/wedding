@@ -1,0 +1,12 @@
+{
+    "name": "wedding",
+    "private": true,
+    "description": "Build tooling for the wedding invitation theme (Tailwind CSS).",
+    "scripts": {
+        "build:css": "tailwindcss -c tailwind.config.js -i assets/css/theme.css -o assets/css/theme.min.css --minify && tailwindcss -c tailwind.admin.config.js -i assets/css/admin.css -o assets/css/admin.min.css --minify",
+        "watch:css": "tailwindcss -c tailwind.config.js -i assets/css/theme.css -o assets/css/theme.min.css --watch"
+    },
+    "devDependencies": {
+        "tailwindcss": "^3.4.0"
+    }
+}
