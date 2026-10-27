@@ -9,9 +9,9 @@
 
         <div class="mt-14 grid gap-6 sm:grid-cols-2 sm:gap-8">
             @foreach ($wedding['events'] as $event)
-                <article class="relative border border-white/15 bg-white/5 px-7 py-10 text-center text-ivory shadow-soft backdrop-blur transition duration-500 before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-gradient-to-r before:from-transparent before:via-gold before:to-transparent hover:-translate-y-1.5 hover:border-gold/60 hover:shadow-2xl sm:px-10 sm:py-12">
+                    <article class="relative rounded-lg border border-gold/25 bg-white/[.06] px-7 py-10 text-center text-ivory shadow-soft backdrop-blur transition duration-500 before:absolute before:inset-x-8 before:top-0 before:h-1 before:bg-gold hover:-translate-y-1.5 hover:border-gold/60 hover:shadow-2xl sm:px-10 sm:py-12">
                     <span class="absolute right-6 top-5 font-display text-lg text-gold/70" aria-hidden="true">0{{ $loop->iteration }}</span>
-                    <span class="inline-flex border border-gold/45 bg-gold/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[.3em] text-clay">{{ $event['day'] }}</span>
+                    <span class="inline-flex rounded-full border border-gold/45 bg-gold/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[.3em] text-gold">{{ $event['day'] }}</span>
                     <h3 class="mt-6 font-display text-4xl text-ivory">{{ $event['title'] }}</h3>
                     <p class="mt-4 text-sm tracking-wide text-ivory/60">{{ $event['date'] }} &middot; {{ $event['time'] }}</p>
                     <span class="mx-auto mt-6 block h-px w-14 bg-white/15"></span>

@@ -1,8 +1,9 @@
-<section class="flex h-screen items-center justify-center bg-jogja-900 bg-cover bg-center px-5 py-16 text-center text-white" id="home" style="background-image: linear-gradient(180deg, rgba(45,27,18,.18), rgba(45,27,18,.72)), url('{{ $wedding['hero_image'] ? asset($wedding['hero_image']) : 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1800&q=85' }}');">
+<section class="relative flex h-screen items-center justify-center overflow-hidden bg-jogja-900 bg-cover bg-center px-5 py-16 text-center text-white" id="home" style="background-image: linear-gradient(180deg, rgba(29,24,18,.24), rgba(29,24,18,.78)), url('{{ $wedding['hero_image'] ? asset($wedding['hero_image']) : 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1800&q=85' }}');">
+    <div class="pointer-events-none absolute inset-5 border border-gold/35 sm:inset-8"></div><div class="pointer-events-none absolute inset-8 border border-white/15 sm:inset-12"></div>
     <div class="max-w-2xl animate-fade-up">
-        <p class="mb-3 text-[9px] font-semibold uppercase tracking-[.28em] text-jogja-300 sm:mb-4 sm:text-[10px]">Undangan Pernikahan</p>
+        <p class="mb-3 text-[9px] font-semibold uppercase tracking-[.34em] text-jogja-300 sm:mb-4 sm:text-[10px]"><span class="mr-2">✦</span>Undangan Pernikahan<span class="ml-2">✦</span></p>
         <h1 class="break-words font-display text-4xl font-medium leading-[.9] sm:text-6xl md:text-8xl">{{ $wedding['bride'] }} <span class="text-jogja-300">&amp;</span> {{ $wedding['groom'] }}</h1>
-        <div class="mx-auto mt-5 h-px w-16 bg-jogja-300 sm:mt-6 sm:w-20"></div>
+        <div class="mx-auto mt-5 flex w-40 items-center gap-3 sm:mt-6"><span class="h-px flex-1 bg-gold/70"></span><span class="h-2 w-2 rotate-45 border border-gold bg-transparent"></span><span class="h-px flex-1 bg-gold/70"></span></div>
         <p class="mt-4 font-display text-lg italic sm:mt-5 sm:text-xl md:text-2xl">Menyatukan dua hati, melestarikan sebuah tradisi.</p>
         <p class="mt-3 text-[11px] tracking-wider text-white/80 sm:mt-4 sm:text-xs">{{ $wedding['date'] }} &middot; {{ $wedding['city'] }}</p>
         <div id="countdown" data-target="{{ $wedding['date_iso'] }}" class="mx-auto mt-5 grid max-w-xs grid-cols-4 gap-1 text-center sm:mt-6 sm:gap-1.5">

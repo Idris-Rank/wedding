@@ -12,10 +12,10 @@
             theme: {
                 extend: {
                     colors: {
-                        ivory: '#faf8f2', sand: '#f1ece1', sage: '#8b9789', forest: '#22362c', deep: '#16241d', clay: '#96634c', ink: '#26302a', gold: '#c5a467', champagne: '#e6d3a8', sogan: '#7b2d26',
+                         ivory: '#fbf8f0', sand: '#eee5d4', sage: '#8b9789', forest: '#26372f', deep: '#1d2924', clay: '#874b36', ink: '#2d302b', gold: '#b99452', champagne: '#dfc894', sogan: '#762f25', wood: '#5c3928',
                         jogja: { 50: '#fbf8f1', 100: '#f4ead6', 300: '#d6b878', 500: '#a87a32', 700: '#6d431c', 900: '#2d1b12' }
                     },
-                    fontFamily: { display: ['Cormorant Garamond', 'Georgia', 'serif'], sans: ['DM Sans', 'system-ui', 'sans-serif'] },
+        fontFamily: { display: ['Cormorant Garamond', 'Georgia', 'serif'], sans: ['DM Sans', 'system-ui', 'sans-serif'] },
                     boxShadow: { soft: '0 20px 60px rgba(45, 27, 18, .12)' },
                     keyframes: {
                         fadeUp: { '0%': { opacity: '0', transform: 'translateY(28px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
@@ -43,17 +43,17 @@
         @include('components.wedding.gallery')
         @include('components.wedding.rsvp')
 
-        <section class="reveal px-6 py-24 opacity-0 translate-y-7 transition duration-700 sm:py-28" id="gift">
+        <section class="reveal relative overflow-hidden px-6 py-24 opacity-0 translate-y-7 transition duration-700 sm:py-28" id="gift">
             <div class="mx-auto max-w-2xl text-center">
                 <p class="mx-auto flex w-fit items-center gap-4 text-[11px] font-semibold uppercase tracking-[.38em] text-clay before:h-px before:w-11 before:bg-gradient-to-r before:from-transparent before:to-gold after:h-px after:w-11 after:bg-gradient-to-l after:from-transparent after:to-gold">Tanda kasih</p>
                 <h2 class="mt-5 font-display text-4xl font-medium text-forest sm:text-5xl">Amplop digital</h2>
                 <span class="mx-auto mt-6 flex w-36 items-center gap-3"><span class="h-px flex-1 bg-gradient-to-r from-transparent to-gold"></span><span class="h-1.5 w-1.5 rotate-45 bg-gold"></span><span class="h-px flex-1 bg-gradient-to-l from-transparent to-gold"></span></span>
                 <p class="mx-auto mt-6 max-w-md text-[15px] leading-7 text-ink/65">Doa restu Panjenengan adalah hadiah terindah. Jika berkenan, tanda kasih dapat dikirimkan melalui:</p>
             </div>
-            <div class="relative mx-auto mt-10 max-w-2xl border border-forest/10 bg-white px-6 py-9 shadow-soft before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-gradient-to-r before:from-transparent before:via-gold before:to-transparent sm:px-10 sm:py-10">
+                <div class="relative mx-auto mt-10 max-w-2xl rounded-lg border border-wood/15 bg-white px-6 py-9 shadow-soft before:absolute before:inset-x-8 before:top-0 before:h-1 before:bg-sogan sm:px-10 sm:py-10">
                 <div class="flex flex-col gap-4 sm:flex-row">
                     @foreach ($wedding['gifts'] as $gift)
-                        <div class="flex flex-1 items-center justify-between gap-4 border border-forest/10 bg-sand/70 px-5 py-4"><div><p class="text-[10px] font-semibold uppercase tracking-[.3em] text-clay">{{ $gift->provider }}</p><p class="mt-1.5 font-display text-2xl text-forest">{{ $gift->account_number }}</p><p class="text-xs text-ink/55">{{ $gift->account_name }}</p></div><button class="min-h-10 shrink-0 border border-forest/15 bg-white px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-forest transition hover:bg-gold hover:text-deep" type="button" data-copy="{{ $gift->account_number }}">Salin</button></div>
+                        <div class="flex flex-1 items-center justify-between gap-4 rounded-lg border border-wood/15 bg-sand/70 px-5 py-4"><div><p class="text-[10px] font-semibold uppercase tracking-[.3em] text-clay">{{ $gift->provider }}</p><p class="mt-1.5 font-display text-2xl text-forest">{{ $gift->account_number }}</p><p class="text-xs text-ink/55">{{ $gift->account_name }}</p></div><button class="min-h-10 shrink-0 rounded-lg border border-wood/20 bg-white px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-forest transition hover:bg-gold hover:text-deep" type="button" data-copy="{{ $gift->account_number }}">Salin</button></div>
                     @endforeach
                 </div>
                 <p id="copy-status" class="mt-5 min-h-5 text-center text-xs text-clay" role="status" aria-live="polite"></p>

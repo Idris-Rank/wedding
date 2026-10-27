@@ -12,7 +12,7 @@
             </p>
         </div>
 
-        <form id="rsvp-form" action="{{ url('rsvp') }}" method="post" class="relative border border-forest/10 bg-white px-6 py-9 shadow-soft transition duration-500 before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-gradient-to-r before:from-transparent before:via-gold before:to-transparent hover:-translate-y-1 hover:border-gold/60 hover:shadow-2xl sm:px-9 sm:py-10">
+        <form id="rsvp-form" action="{{ url('rsvp') }}" method="post" class="relative rounded-lg border border-wood/15 bg-white px-6 py-9 shadow-soft transition duration-500 before:absolute before:inset-x-8 before:top-0 before:h-1 before:bg-sogan hover:-translate-y-1 hover:border-gold/60 hover:shadow-2xl sm:px-9 sm:py-10">
             {!! csrf_field() !!}
             <p class="text-[10px] font-semibold uppercase tracking-[.35em] text-clay">Konfirmasi kehadiran</p>
 

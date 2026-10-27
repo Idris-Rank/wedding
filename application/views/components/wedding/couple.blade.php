@@ -12,7 +12,7 @@
             <article class="sm:pr-16">
                 <div class="relative mx-auto h-72 w-60 transition duration-700 hover:-translate-y-2 hover:shadow-2xl sm:h-80 sm:w-64">
                     <div class="absolute -inset-3 border border-gold/45"></div>
-                    <div class="h-full w-full overflow-hidden rounded-t-full bg-sand shadow-[0_30px_60px_-30px_rgba(22,36,29,.6)]">
+                    <div class="h-full w-full overflow-hidden rounded-t-full border-4 border-ivory bg-sand shadow-[0_30px_60px_-30px_rgba(22,36,29,.6)]">
                         @if ($wedding['bride_image'])<img class="h-full w-full object-cover" src="{{ asset($wedding['bride_image']) }}" alt="{{ $wedding['bride'] }}, mempelai wanita" loading="lazy" decoding="async">@else<div class="flex h-full items-center justify-center bg-gradient-to-br from-sand to-champagne p-6 text-center"><span class="font-display text-4xl text-forest">{{ $wedding['bride'] }}</span></div>@endif
                     </div>
                 </div>
@@ -25,7 +25,7 @@
             <article class="sm:pl-16">
                 <div class="relative mx-auto h-72 w-60 transition duration-700 hover:-translate-y-2 hover:shadow-2xl sm:h-80 sm:w-64">
                     <div class="absolute -inset-3 border border-gold/45"></div>
-                    <div class="h-full w-full overflow-hidden rounded-t-full bg-sand shadow-[0_30px_60px_-30px_rgba(22,36,29,.6)]">
+                    <div class="h-full w-full overflow-hidden rounded-t-full border-4 border-ivory bg-sand shadow-[0_30px_60px_-30px_rgba(22,36,29,.6)]">
                         @if ($wedding['groom_image'])<img class="h-full w-full object-cover" src="{{ asset($wedding['groom_image']) }}" alt="{{ $wedding['groom'] }}, mempelai pria" loading="lazy" decoding="async">@else<div class="flex h-full items-center justify-center bg-gradient-to-br from-sand to-champagne p-6 text-center"><span class="font-display text-4xl text-forest">{{ $wedding['groom'] }}</span></div>@endif
                     </div>
                 </div>
