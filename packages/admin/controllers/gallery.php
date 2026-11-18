@@ -20,7 +20,7 @@ class Admin_Gallery_Controller extends Controller
     public function post_store()
     {
         $wedding = $this->wedding();
-        $validation = Validator::make(Input::all(), ['image_path' => 'required|image|mimes:jpg,jpeg,png,webp|max:10240', 'alt_text' => 'required|max:255', 'caption' => 'nullable|max:255', 'sort_order' => 'nullable|integer|min:1']);
+        $validation = Validator::make(Input::all(), ['image_path' => 'required|image|mimes:jpg,jpeg,png,webp|max:8192', 'alt_text' => 'required|max:255', 'caption' => 'nullable|max:255', 'sort_order' => 'nullable|integer|min:1']);
         if ($validation->fails()) {
             return Redirect::back()->with_input()->with_errors($validation);
         }
@@ -54,7 +54,14 @@ class Admin_Gallery_Controller extends Controller
         if (!$gallery) {
             return Redirect::to('admin/galleries');
         }
-        $validation = Validator::make(Input::all(), ['image_path' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240', 'alt_text' => 'required|max:255', 'caption' => 'nullable|max:255', 'sort_order' => 'nullable|integer|min:1']);
+        $uploaded_file = Input::file('image_path');
+        if (is_array($uploaded_file) && isset($uploaded_file['error']) && $uploaded_file['error'] !== UPLOAD_ERR_OK && $uploaded_file['error'] !== UPLOAD_ERR_NO_FILE) {
+            $message = $uploaded_file['error'] === UPLOAD_ERR_INI_SIZE || $uploaded_file['error'] === UPLOAD_ERR_FORM_SIZE
+                ? 'Ukuran gambar melebihi batas upload server. Coba gambar yang lebih kecil.'
+                : 'Upload gambar gagal. Silakan coba lagi.';
+            return Redirect::back()->with_input('except', ['image_path'])->with('error', $message);
+        }
+        $validation = Validator::make(Input::all(), ['image_path' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:8192', 'alt_text' => 'required|max:255', 'caption' => 'nullable|max:255', 'sort_order' => 'nullable|integer|min:1']);
         if ($validation->fails()) {
             return Redirect::back()->with_input()->with_errors($validation);
         }

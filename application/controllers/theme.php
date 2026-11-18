@@ -6,7 +6,7 @@ class Theme_Controller extends Controller
 {
     public function __construct()
     {
-        // $this->middleware('before', 'csrf|throttle:60,1')->on('post');
+        $this->middleware('before', 'csrf|throttle:10,1')->on('post');
     }
 
     public function action_index()

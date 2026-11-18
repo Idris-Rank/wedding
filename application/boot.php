@@ -31,6 +31,10 @@ System\Hook::listen(System\Config::LOADER, function ($package, $file) {
 
 System\Autoloader::aliases((array) System\Config::get('aliases'));
 
+Gate::define('admin', function ($user) {
+    return $user && !empty($user->is_admin);
+});
+
 /*
 |--------------------------------------------------------------------------
 | Autoload Directories

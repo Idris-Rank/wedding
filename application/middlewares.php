@@ -31,6 +31,11 @@ Route::middleware('csrf', function () {
 
 Route::middleware('auth', function () {
     if (Auth::guest()) {
+        $uri = trim(URI::current(), '/');
+        if ($uri === 'admin' || strpos($uri, 'admin/') === 0) {
+            return Redirect::to('admin/login');
+        }
+
         return Response::error(401);
     }
 });

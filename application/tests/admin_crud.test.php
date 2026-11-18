@@ -16,7 +16,7 @@ class AdminCrudTest extends \PHPUnit_Framework_TestCase
     public function testCrudPagesRequireAuthentication()
     {
         foreach (['admin/events', 'admin/galleries', 'admin/gifts', 'admin/wedding'] as $uri) {
-            $this->get($uri)->assert_unauthorized();
+            $this->get($uri)->assert_redirect('admin/login');
         }
     }
 

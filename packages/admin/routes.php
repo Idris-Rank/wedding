@@ -6,7 +6,7 @@ Route::get('(:package)/login', 'admin::auth@login');
 Route::post('(:package)/login', ['before' => 'csrf|throttle:10,1', 'uses' => 'admin::auth@authenticate']);
 Route::post('(:package)/logout', ['before' => 'csrf|auth', 'uses' => 'admin::auth@logout']);
 
-Route::group(['before' => 'auth'], function () {
+Route::group(['before' => 'auth|can:admin'], function () {
     Route::get('(:package)', 'admin::dashboard@index');
     Route::get('(:package)/wedding', 'admin::wedding@index');
     Route::get('(:package)/events', 'admin::event@index');

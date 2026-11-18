@@ -15,7 +15,7 @@ class AdminGalleryTest extends \PHPUnit_Framework_TestCase
      */
     public function testGalleryPageRequiresAuthentication()
     {
-        $this->get('admin/galleries')->assert_unauthorized();
+        $this->get('admin/galleries')->assert_redirect('admin/login');
     }
 
     /**
@@ -27,8 +27,8 @@ class AdminGalleryTest extends \PHPUnit_Framework_TestCase
     {
         $controller = file_get_contents(path('package').'admin'.DS.'controllers'.DS.'gallery.php');
 
-        $this->assertContains("image_path' => 'required|image|mimes:jpg,jpeg,png,webp|max:10240", $controller);
-        $this->assertContains("image_path' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240", $controller);
+        $this->assertContains("image_path' => 'required|image|mimes:jpg,jpeg,png,webp|max:8192", $controller);
+        $this->assertContains("image_path' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:8192", $controller);
         $this->assertContains("'images/gallery'", $controller);
         $this->assertContains('Wedding_Upload::remove($new_image', $controller);
         $this->assertContains('if ($new_image) { Wedding_Upload::remove($gallery->image_path', $controller);

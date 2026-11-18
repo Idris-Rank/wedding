@@ -7,7 +7,8 @@ class Admin_Auth_Controller extends Controller
 
     public function get_login()
     {
-        if (Auth::check()) { return Redirect::to('admin'); }
+        $user = Auth::user();
+        if ($user && !empty($user->is_admin)) { return Redirect::to('admin'); }
         return View::make('admin::login');
     }
 
@@ -17,7 +18,12 @@ class Admin_Auth_Controller extends Controller
         if ($validation->fails()) { return Redirect::back()->with_input('only', ['email'])->with_errors($validation); }
 
         if (Auth::attempt(['email' => Input::get('email'), 'password' => Input::get('password')])) {
-            return Redirect::to('admin');
+            $user = Auth::user();
+            if ($user && !empty($user->is_admin)) {
+                return Redirect::to('admin');
+            }
+
+            Auth::logout();
         }
 
         return Redirect::back()->with_input('only', ['email'])->with('error', 'Email atau password salah.');

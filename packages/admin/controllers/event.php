@@ -10,7 +10,7 @@ class Admin_Event_Controller extends Controller
     public function post_store()
     {
         $wedding = $this->wedding();
-        $validation = Validator::make(Input::all(), ['event_type' => 'required|max:30', 'title' => 'required|max:100', 'event_date' => 'required|date', 'start_time' => 'required', 'end_time' => 'nullable', 'venue' => 'required|max:180', 'address' => 'nullable|max:255', 'maps_url' => 'nullable|url|max:500']);
+        $validation = Validator::make(Input::all(), ['event_type' => 'required|max:30', 'title' => 'required|max:100', 'event_date' => 'required|date', 'start_time' => 'required', 'end_time' => 'nullable', 'venue' => 'required|max:180', 'address' => 'nullable|max:255', 'maps_url' => ['nullable', 'url', 'match:/^https?:\\/\\//i', 'max:500']]);
         if ($validation->fails()) { return Redirect::back()->with_input()->with_errors($validation); }
         if (Input::get('end_time') && Input::get('end_time') <= Input::get('start_time')) { return Redirect::back()->with_input()->with('error', 'Waktu selesai harus setelah waktu mulai.'); }
         $data = $validation->validated(); $data['wedding_id'] = $wedding->id; $data['sort_order'] = (int) DB::table('wedding_events')->where('wedding_id', '=', $wedding->id)->count() + 1;
@@ -29,7 +29,7 @@ class Admin_Event_Controller extends Controller
         $wedding = $this->wedding();
         $event = DB::table('wedding_events')->where('id', '=', (int) $id)->where('wedding_id', '=', $wedding->id)->first();
         if (!$event) { return Redirect::to('admin/events'); }
-        $validation = Validator::make(Input::all(), ['event_type' => 'required|max:30', 'title' => 'required|max:100', 'event_date' => 'required|date', 'start_time' => 'required', 'end_time' => 'nullable', 'venue' => 'required|max:180', 'address' => 'nullable|max:255', 'maps_url' => 'nullable|url|max:500']);
+        $validation = Validator::make(Input::all(), ['event_type' => 'required|max:30', 'title' => 'required|max:100', 'event_date' => 'required|date', 'start_time' => 'required', 'end_time' => 'nullable', 'venue' => 'required|max:180', 'address' => 'nullable|max:255', 'maps_url' => ['nullable', 'url', 'match:/^https?:\\/\\//i', 'max:500']]);
         if ($validation->fails()) { return Redirect::back()->with_input()->with_errors($validation); }
         if (Input::get('end_time') && Input::get('end_time') <= Input::get('start_time')) { return Redirect::back()->with_input()->with('error', 'Waktu selesai harus setelah waktu mulai.'); }
         DB::table('wedding_events')->where('id', '=', (int) $id)->where('wedding_id', '=', $wedding->id)->update($validation->validated());
