@@ -21,6 +21,11 @@ class Theme_Controller extends Controller
         $galleries = DB::table('wedding_galleries')->where('wedding_id', '=', $record->id)->where('is_visible', '=', 1)->order_by('sort_order')->get();
         $gifts = DB::table('wedding_gifts')->where('wedding_id', '=', $record->id)->where('is_visible', '=', 1)->order_by('sort_order')->get();
         $first_event = $events->first();
+        $hero_image = $this->asset_or_null($record->hero_image, 'image');
+
+        if (! $hero_image && $galleries->count()) {
+            $hero_image = $this->asset_or_null($galleries->first()->image_path, 'image');
+        }
 
         $wedding = [
             'bride' => $record->bride_name,
@@ -34,7 +39,7 @@ class Theme_Controller extends Controller
             'quote' => $record->quote,
             'quote_source' => $record->quote_source,
             'whatsapp' => $record->whatsapp,
-            'hero_image' => $this->asset_or_null($record->hero_image, 'image'),
+            'hero_image' => $hero_image,
             'bride_image' => $this->asset_or_null($record->bride_image, 'image'),
             'groom_image' => $this->asset_or_null($record->groom_image, 'image'),
             'audio_path' => $this->asset_or_null($record->audio_path, 'audio'),
@@ -43,7 +48,7 @@ class Theme_Controller extends Controller
                 'title' => 'Dari sebuah pertemuan, menuju selamanya.',
                 'body' => 'Berawal dari pertemuan sederhana di Yogyakarta, dua keluarga dan dua perjalanan hidup akhirnya dipertemukan dalam satu niat baik. Dengan doa orang tua dan restu keluarga, kami memilih untuk berjalan bersama.',
                 'quote' => 'Rukun agawe santosa, crah agawe bubrah.',
-                'image' => $this->asset_or_null($record->hero_image, 'image'),
+                'image' => $hero_image,
             ],
             'events' => $events->map(function ($event) {
                 return [

@@ -59,14 +59,16 @@ class AdminCrudTest extends \PHPUnit_Framework_TestCase
     {
         $controller = file_get_contents(path('package').'admin'.DS.'controllers'.DS.'wedding.php');
         $view = file_get_contents(path('package').'admin'.DS.'views'.DS.'partials'.DS.'wedding.blade.php');
-        $this->assertContains("hero_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240", $controller);
-        $this->assertContains("audio_path' => 'nullable|mimes:mp3,wav,ogg|max:10240", $controller);
+        $this->assertContains("hero_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048", $controller);
+        $this->assertContains("audio_path' => 'nullable|mimes:mp3,wav,ogg|max:2048", $controller);
         $this->assertContains('enctype="multipart/form-data"', $view);
         $this->assertContains('type="file"', $view);
         $this->assertNotContains('Path hero image', $view);
         $this->assertNotContains('Path audio', $view);
-        $this->assertContains("bride_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240", $controller);
-        $this->assertContains("groom_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240", $controller);
+        $this->assertContains("bride_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048", $controller);
+        $this->assertContains("groom_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048", $controller);
+        $this->assertContains('UPLOAD_ERR_INI_SIZE', $controller);
+        $this->assertContains('batas upload server 2 MB', $controller);
         $this->assertContains("['bride_image'", $view);
         $this->assertContains("['groom_image'", $view);
         $this->assertContains('post_delete_media', $controller);

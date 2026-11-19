@@ -8,7 +8,16 @@ class Admin_Wedding_Controller extends Controller
     public function post_update()
     {
         $wedding = Wedding::where('is_active', '=', 1)->order_by('id')->first();
-        $validation = Validator::make(Input::all(), ['groom_name' => 'required|max:150', 'bride_name' => 'required|max:150', 'groom_parents' => 'nullable|max:255', 'bride_parents' => 'nullable|max:255', 'quote' => 'nullable|max:2000', 'quote_source' => 'nullable|max:100', 'hero_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240', 'bride_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240', 'groom_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:10240', 'audio_path' => 'nullable|mimes:mp3,wav,ogg|max:10240', 'whatsapp' => 'nullable|max:30']);
+        foreach (['hero_image', 'bride_image', 'groom_image', 'audio_path'] as $field) {
+            $file = Input::file($field);
+            if (is_array($file) && isset($file['error']) && $file['error'] !== UPLOAD_ERR_OK && $file['error'] !== UPLOAD_ERR_NO_FILE) {
+                $message = $file['error'] === UPLOAD_ERR_INI_SIZE || $file['error'] === UPLOAD_ERR_FORM_SIZE
+                    ? 'Ukuran file melebihi batas upload server 2 MB. Kompres foto atau pilih file yang lebih kecil.'
+                    : 'Upload file gagal. Silakan coba lagi dengan file lain.';
+                return Redirect::back()->with_input('except', ['hero_image', 'bride_image', 'groom_image', 'audio_path'])->with('error', $message);
+            }
+        }
+        $validation = Validator::make(Input::all(), ['groom_name' => 'required|max:150', 'bride_name' => 'required|max:150', 'groom_parents' => 'nullable|max:255', 'bride_parents' => 'nullable|max:255', 'quote' => 'nullable|max:2000', 'quote_source' => 'nullable|max:100', 'hero_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048', 'bride_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048', 'groom_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048', 'audio_path' => 'nullable|mimes:mp3,wav,ogg|max:2048', 'whatsapp' => 'nullable|max:30']);
         if ($validation->fails()) { return Redirect::back()->with_input()->with_errors($validation); }
         $data = $validation->validated(); unset($data['hero_image'], $data['bride_image'], $data['groom_image'], $data['audio_path']); $new_files = [];
         try {

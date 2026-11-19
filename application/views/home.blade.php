@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Undangan Pernikahan | {{ $wedding['short_names'] }}</title>
     <meta name="description" content="Undangan pernikahan {{ $wedding['short_names'] }}, {{ $wedding['date'] }} di {{ $wedding['city'] }}.">
-    <meta name="theme-color" content="#2d1b12">
-    <link rel="stylesheet" href="{{ asset('css/theme.min.css') }}">
+    <meta name="theme-color" content="#1d2924">
+    <link rel="stylesheet" href="{{ asset('css/theme.min.css') }}?v={{ filemtime(path('assets').'css/theme.min.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
     @include('components.wedding.navigation')
     @include('components.wedding.cover')
 
-    <main>
+    <main id="main-content">
         @include('components.wedding.welcome')
         @include('components.wedding.couple')
         @include('components.wedding.events')
@@ -24,17 +24,17 @@
         @include('components.wedding.gallery')
         @include('components.wedding.rsvp')
 
-        <section class="reveal relative overflow-hidden px-6 py-24 opacity-0 translate-y-7 transition duration-700 sm:py-28" id="gift">
+        <section class="reveal relative overflow-hidden bg-sand/70 px-6 py-20 opacity-0 translate-y-7 transition duration-700 sm:py-28" id="gift">
             <div class="mx-auto max-w-2xl text-center">
                 <p class="mx-auto flex w-fit items-center gap-4 text-[11px] font-semibold uppercase tracking-[.38em] text-clay before:h-px before:w-11 before:bg-gradient-to-r before:from-transparent before:to-gold after:h-px after:w-11 after:bg-gradient-to-l after:from-transparent after:to-gold">Tanda kasih</p>
                 <h2 class="mt-5 font-display text-4xl font-medium text-forest sm:text-5xl">Amplop digital</h2>
                 <span class="mx-auto mt-6 flex w-36 items-center gap-3"><span class="h-px flex-1 bg-gradient-to-r from-transparent to-gold"></span><span class="h-1.5 w-1.5 rotate-45 bg-gold"></span><span class="h-px flex-1 bg-gradient-to-l from-transparent to-gold"></span></span>
-                <p class="mx-auto mt-6 max-w-md text-[15px] leading-7 text-ink/65">Doa restu Panjenengan adalah hadiah terindah. Jika berkenan, tanda kasih dapat dikirimkan melalui:</p>
+                <p class="mx-auto mt-6 max-w-md text-[15px] leading-7 text-ink/80">Doa restu Panjenengan adalah hadiah terindah. Jika berkenan, tanda kasih dapat dikirimkan melalui:</p>
             </div>
-                <div class="relative mx-auto mt-10 max-w-2xl rounded-lg border border-wood/15 bg-white px-6 py-9 shadow-soft before:absolute before:inset-x-8 before:top-0 before:h-1 before:bg-sogan sm:px-10 sm:py-10">
-                <div class="flex flex-col gap-4 sm:flex-row">
+            <div class="relative mx-auto mt-10 max-w-3xl border border-wood/20 bg-white px-5 py-8 shadow-soft before:absolute before:inset-x-8 before:top-0 before:h-1 before:bg-sogan sm:px-9 sm:py-10">
+                <div class="grid gap-4 sm:grid-cols-2">
                     @foreach ($wedding['gifts'] as $gift)
-                        <div class="flex flex-1 items-center justify-between gap-4 rounded-lg border border-wood/15 bg-sand/70 px-5 py-4"><div><p class="text-[10px] font-semibold uppercase tracking-[.3em] text-clay">{{ $gift->provider }}</p><p class="mt-1.5 font-display text-2xl text-forest">{{ $gift->account_number }}</p><p class="text-xs text-ink/55">{{ $gift->account_name }}</p></div><button class="min-h-10 shrink-0 rounded-lg border border-wood/20 bg-white px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-forest transition hover:bg-gold hover:text-deep" type="button" data-copy="{{ $gift->account_number }}">Salin</button></div>
+                        <div class="min-w-0 border border-wood/20 bg-ivory px-5 py-5"><p class="text-[10px] font-semibold uppercase tracking-[.2em] text-clay">{{ $gift->provider }}</p><p class="mt-2 break-all font-display text-2xl text-forest">{{ $gift->account_number }}</p><p class="mt-1 text-xs text-ink/70">{{ $gift->account_name }}</p><button class="mt-5 min-h-11 rounded-full border border-wood/20 bg-white px-5 py-2 text-xs font-semibold uppercase tracking-[.15em] text-forest transition hover:bg-gold hover:text-deep focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold" type="button" data-copy="{{ $gift->account_number }}" aria-label="Salin nomor {{ $gift->provider }}">Salin nomor</button></div>
                     @endforeach
                 </div>
                 <p id="copy-status" class="mt-5 min-h-5 text-center text-xs text-clay" role="status" aria-live="polite"></p>
@@ -42,12 +42,13 @@
         </section>
     </main>
 
-    <footer class="relative overflow-hidden bg-deep px-6 py-16 text-center text-ivory">
+    <footer class="relative overflow-hidden bg-deep px-6 py-20 text-center text-ivory">
         <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gold/45 to-transparent"></div>
         <p class="font-display text-3xl tracking-wide text-gold">{{ strtoupper(substr($wedding['bride'], 0, 1)) }} <span class="italic">&amp;</span> {{ strtoupper(substr($wedding['groom'], 0, 1)) }}</p>
         <p class="mt-6 font-display text-4xl sm:text-5xl">{{ $wedding['short_names'] }}</p>
-        <p class="mt-4 text-sm text-ivory/60">Terima kasih atas doa dan restu Panjenengan.</p>
-        <p class="mt-8 text-[10px] uppercase tracking-[.35em] text-gold/85">{{ $wedding['date'] }} &middot; {{ $wedding['city'] }}</p>
+        <p class="mt-4 text-sm text-ivory/80">Terima kasih atas doa dan restu Panjenengan.</p>
+        <p class="mx-auto mt-8 h-px w-16 bg-gold/50"></p>
+        <p class="mt-8 text-[10px] uppercase leading-6 tracking-[.25em] text-gold">{{ $wedding['date'] }} &middot; {{ $wedding['city'] }}</p>
     </footer>
 
     @if ($wedding['audio_path'])<audio id="wedding-audio" loop preload="none"><source src="{{ asset($wedding['audio_path']) }}" type="audio/mpeg"></audio>@endif
@@ -74,7 +75,10 @@
             }
             openButton.addEventListener('click', function () {
                 opening.classList.add('opacity-0', 'invisible', 'pointer-events-none');
+                opening.setAttribute('aria-hidden', 'true');
+                openButton.disabled = true;
                 document.body.classList.remove('overflow-hidden');
+                document.getElementById('home').focus();
                 if (audio) { audio.play().then(function () { setMusicState(true); }).catch(function () {}); }
             });
             if (audio && musicButton) { musicButton.addEventListener('click', function () {
@@ -93,7 +97,9 @@
             window.setInterval(updateCountdown, 1000);
 
             var revealItems = document.querySelectorAll('.reveal');
-            if ('IntersectionObserver' in window) {
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                revealItems.forEach(function (item) { item.classList.remove('opacity-0', 'translate-y-7'); });
+            } else if ('IntersectionObserver' in window) {
                 var observer = new IntersectionObserver(function (entries) { entries.forEach(function (entry) { if (entry.isIntersecting) { entry.target.classList.remove('opacity-0', 'translate-y-7'); observer.unobserve(entry.target); } }); }, { threshold: .14 });
                 revealItems.forEach(function (item) { observer.observe(item); });
             } else { revealItems.forEach(function (item) { item.classList.remove('opacity-0', 'translate-y-7'); }); }
