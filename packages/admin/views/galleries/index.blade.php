@@ -1,7 +1,31 @@
 @layout('admin::layout')
 @section('content')
-<div class="mb-8 flex items-end justify-between gap-4"><div><p class="text-xs font-semibold uppercase tracking-[.3em] text-clay">Konten</p><h1 class="mt-2 font-display text-5xl text-forest">Galeri Foto</h1></div><a class="rounded-lg bg-forest px-4 py-3 text-xs uppercase tracking-widest text-white" href="{{ url('admin/galleries/create') }}">Tambah foto</a></div>
+<div class="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+    <div><p class="text-[10px] font-bold uppercase tracking-[.24em] text-clay">Koleksi momen</p><h1 class="mt-2 font-display text-4xl leading-tight text-forest sm:text-5xl">Galeri foto</h1><p class="mt-2 max-w-xl text-sm leading-6 text-ink/60">Pilih foto yang bercerita tentang Anda dan susun tampilannya di undangan.</p></div>
+    <a class="inline-flex min-h-11 items-center justify-center rounded-lg bg-forest px-5 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-sm transition hover:bg-clay focus:outline-none focus:ring-2 focus:ring-gold focus:ring-offset-2" href="{{ url('admin/galleries/create') }}"><span class="mr-2 text-base" aria-hidden="true">＋</span>Tambah foto</a>
+</div>
 @include('admin::partials.alerts')
-<div class="max-w-4xl rounded-lg bg-white p-6 shadow-sm lg:p-8"><div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">@forelse ($galleries as $gallery)<article class="rounded-lg border border-forest/10 bg-cream p-4"><img class="gallery-image mb-4 aspect-video w-full rounded-lg object-cover" src="{{ asset($gallery->image_path) }}" alt="{{ $gallery->alt_text }}"><p class="font-semibold text-forest">{{ $gallery->caption ?: $gallery->alt_text }}</p><p class="mt-1 text-xs text-ink/50">{{ $gallery->alt_text }}</p><div class="mt-4 flex gap-2"><a class="rounded-lg px-3 py-2 text-xs uppercase tracking-widest text-forest hover:bg-white" href="{{ url('admin/galleries/'.$gallery->id.'/edit') }}">Edit</a><form method="post" action="{{ url('admin/galleries/'.$gallery->id.'/delete') }}" onsubmit="return confirm('Hapus foto ini?');">{!! csrf_field() !!}<button class="rounded-lg px-3 py-2 text-xs uppercase tracking-widest text-clay hover:bg-white" type="submit">Hapus</button></form></div></article>@empty<p class="text-sm text-ink/60 sm:col-span-2 lg:col-span-3">Belum ada foto galeri.</p>@endforelse</div></div>
-<script>document.querySelectorAll('.gallery-image').forEach(function (image) { image.addEventListener('error', function () { image.alt = 'Preview tidak tersedia'; image.classList.add('hidden'); }); });</script>
+<section class="rounded-xl border border-forest/10 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="gallery-title">
+    <div class="mb-5 flex items-center justify-between gap-4 border-b border-forest/10 pb-4"><div><h2 id="gallery-title" class="font-display text-2xl text-forest">Foto undangan</h2><p class="mt-1 text-xs text-ink/55">{{ count($galleries) }} foto tersimpan</p></div><span class="rounded-full bg-cream px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-clay">Urutan tampil</span></div>
+    @if (count($galleries))
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            @foreach ($galleries as $gallery)
+                <article class="group overflow-hidden rounded-xl border border-forest/10 bg-white transition hover:border-gold/60 hover:shadow-soft">
+                    <div class="relative aspect-[4/3] overflow-hidden bg-cream"><img class="gallery-image h-full w-full object-cover transition duration-500 group-hover:scale-105" src="{{ asset($gallery->image_path) }}" alt="{{ $gallery->alt_text }}" loading="lazy"><span class="absolute left-3 top-3 rounded-full bg-white/95 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-forest shadow-sm">#{{ $gallery->sort_order }}</span></div>
+                    <div class="p-4"><h3 class="truncate font-display text-xl text-forest">{{ $gallery->caption ?: $gallery->alt_text }}</h3><p class="mt-1 line-clamp-2 min-h-9 text-xs leading-5 text-ink/55">Alt text: {{ $gallery->alt_text }}</p><div class="mt-4 flex items-center justify-between border-t border-forest/10 pt-3"><a class="inline-flex min-h-10 items-center rounded-lg px-3 text-xs font-semibold text-forest transition hover:bg-cream focus:outline-none focus:ring-2 focus:ring-gold" href="{{ url('admin/galleries/'.$gallery->id.'/edit') }}">Edit foto</a><form method="post" action="{{ url('admin/galleries/'.$gallery->id.'/delete') }}" onsubmit="return confirm('Hapus foto ini?');">{!! csrf_field() !!}<button class="inline-flex min-h-10 items-center rounded-lg px-3 text-xs font-semibold text-clay transition hover:bg-clay/5 focus:outline-none focus:ring-2 focus:ring-clay" type="submit">Hapus</button></form></div></div>
+                </article>
+            @endforeach
+        </div>
+    @else
+        <div class="px-5 py-12 text-center"><span class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-cream font-display text-3xl text-gold" aria-hidden="true">◇</span><h3 class="mt-4 font-display text-2xl text-forest">Galeri masih kosong</h3><p class="mx-auto mt-1 max-w-sm text-sm leading-6 text-ink/55">Tambahkan beberapa foto untuk melengkapi cerita di undangan Anda.</p><a class="mt-5 inline-flex min-h-11 items-center rounded-lg bg-forest px-5 py-3 text-xs font-semibold text-white transition hover:bg-clay focus:outline-none focus:ring-2 focus:ring-gold focus:ring-offset-2" href="{{ url('admin/galleries/create') }}">Unggah foto pertama</a></div>
+    @endif
+</section>
+<script>
+    document.querySelectorAll('.gallery-image').forEach(function (image) {
+        image.addEventListener('error', function () {
+            image.alt = 'Preview tidak tersedia';
+            image.classList.add('hidden');
+        });
+    });
+</script>
 @endsection

@@ -17,8 +17,11 @@ module.exports = {
                 gold: '#c8a66a',
             },
             fontFamily: {
-                display: ['Cormorant Garamond', 'serif'],
+                display: ['Playfair Display', 'serif'],
                 sans: ['DM Sans', 'sans-serif'],
+            },
+            boxShadow: {
+                soft: '0 18px 50px rgba(38, 55, 47, .12)',
             },
         },
     },
